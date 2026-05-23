@@ -13,7 +13,6 @@ A guided project that teaches Structure from Motion (SfM) through hands-on exper
 ```
 src/gf4/
   week1/
-    test.py              # pycolmap sparse reconstruction pipeline (CLI)
   week2/
     sfm_utils.py         # SfM utility functions
     week2_pipeline.py    # Pairwise matching & epipolar geometry CLI
