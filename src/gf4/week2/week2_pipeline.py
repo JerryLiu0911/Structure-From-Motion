@@ -3,10 +3,10 @@
 This script supports two modes:
 
 1. Pair mode:
-   python week2/week2_pipeline.py --image1 a.jpg --image2 b.jpg --output-dir out/
+   python -m gf4.week2.week2_pipeline --image1 a.jpg --image2 b.jpg --output-dir out/
 
 2. Dataset mode:
-   python week2/week2_pipeline.py --image-dir images/ --output-dir out/ --max-images 20
+   python -m gf4.week2.week2_pipeline --image-dir images/ --output-dir out/ --max-images 20
 
 The core computer-vision functions live in sfm_utils.py and are intentionally
 left as TODOs for students to complete.
@@ -19,7 +19,7 @@ from itertools import combinations
 from pathlib import Path
 import sys
 
-from sfm_utils import (
+from .sfm_utils import (
     analyse_image_pair,
     analyse_feature_pair,
     draw_match_graph,

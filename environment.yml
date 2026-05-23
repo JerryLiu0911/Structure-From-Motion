@@ -1,0 +1,27 @@
+name: gf4-sfm
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python version — pinned to match .python-version
+  - python=3.13
+
+  # Core scientific stack (conda-forge wheels include native libs)
+  - numpy>=1.26
+  - matplotlib>=3.8
+
+  # OpenCV with contrib (conda-forge build includes SIFT, etc.)
+  - opencv>=4.9
+
+  # Pip-only packages (no conda-forge wheel for pycolmap)
+  - pip
+  - pip:
+      - pycolmap>=0.6
+      - structure-from-motion @ file:.       # installs this project in editable mode
+      - pytest>=8
+      - pytest-cov>=5
+      - ruff>=0.4
+      - mypy>=1.10
+      - pre-commit>=3

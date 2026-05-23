@@ -1,1 +1,59 @@
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ─── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+# (conda envs live in the conda prefix, not in the repo)
+
+# ─── Tool caches ─────────────────────────────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ─── IDEs ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS artefacts ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+# ─── Project-specific data & outputs ─────────────────────────────────────────
+# COLMAP projects folder (large binary image data — keep out of git)
 /COLMAP projects/
+
+# COLMAP databases and reconstruction outputs
+*.db
+sparse/
+dense/
+outputs/
+results/
+
+# Image data directories (use !path to explicitly un-ignore specific tracked sets)
+images/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+*.ipynb

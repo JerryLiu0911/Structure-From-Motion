@@ -1,0 +1,118 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  CONDA_ENV: gf4-sfm
+  RUN: conda run --no-capture-output -n {{.CONDA_ENV}}
+
+tasks:
+  # ─── Environment ────────────────────────────────────────────────────────────
+
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  create-env:
+    desc: Create the conda environment from environment.yml
+    cmds:
+      - conda env create -f environment.yml
+    status:
+      - conda env list | grep -q "^{{.CONDA_ENV}} "
+
+  update-env:
+    desc: Update the conda environment after changes to environment.yml
+    cmds:
+      - conda env update -f environment.yml --prune
+
+  remove-env:
+    desc: Delete the conda environment entirely
+    cmds:
+      - conda env remove -n {{.CONDA_ENV}}
+
+  setup:
+    desc: Create env and install pre-commit hooks (run once after cloning)
+    deps: [create-env]
+    cmds:
+      - "{{.RUN}} pre-commit install"
+
+  # ─── Development ────────────────────────────────────────────────────────────
+
+  lint:
+    desc: Run ruff linter
+    cmds:
+      - "{{.RUN}} ruff check ."
+
+  format:
+    desc: Format code with ruff
+    cmds:
+      - "{{.RUN}} ruff format ."
+
+  format-check:
+    desc: Check formatting without modifying files (used in CI)
+    cmds:
+      - "{{.RUN}} ruff format --check ."
+
+  typecheck:
+    desc: Run mypy type checker
+    cmds:
+      - "{{.RUN}} mypy src/gf4"
+
+  test:
+    desc: Run pytest test suite
+    cmds:
+      - "{{.RUN}} pytest"
+
+  test-cov:
+    desc: Run tests with coverage report
+    cmds:
+      - "{{.RUN}} pytest --cov=gf4 --cov-report=term-missing"
+
+  check:
+    desc: Run lint + format-check + typecheck + tests (full pre-push check)
+    cmds:
+      - task: lint
+      - task: format-check
+      - task: typecheck
+      - task: test
+
+  # ─── Running the pipelines ──────────────────────────────────────────────────
+
+  run:
+    desc: Print usage hints for the SfM pipelines
+    cmds:
+      - "{{.RUN}} python main.py"
+
+  week1:
+    desc: "Run Week 1 pycolmap pipeline (set IMAGE_DIR and OUTPUT_DIR env vars)"
+    cmds:
+      - "{{.RUN}} python -m gf4.week1.test --image-dir {{.IMAGE_DIR}} --output-dir {{.OUTPUT_DIR}}"
+    requires:
+      vars: [IMAGE_DIR, OUTPUT_DIR]
+
+  week2-pair:
+    desc: "Run Week 2 pair mode (set IMAGE1, IMAGE2, OUTPUT_DIR)"
+    cmds:
+      - "{{.RUN}} python -m gf4.week2.week2_pipeline --image1 {{.IMAGE1}} --image2 {{.IMAGE2}} --output-dir {{.OUTPUT_DIR}}"
+    requires:
+      vars: [IMAGE1, IMAGE2, OUTPUT_DIR]
+
+  week2-dataset:
+    desc: "Run Week 2 dataset mode (set IMAGE_DIR and OUTPUT_DIR)"
+    cmds:
+      - "{{.RUN}} python -m gf4.week2.week2_pipeline --image-dir {{.IMAGE_DIR}} --output-dir {{.OUTPUT_DIR}}"
+    requires:
+      vars: [IMAGE_DIR, OUTPUT_DIR]
+
+  # ─── Housekeeping ───────────────────────────────────────────────────────────
+
+  clean:
+    desc: Remove Python build artefacts and caches
+    cmds:
+      - rm -rf dist build *.egg-info
+      - find . -type d -name __pycache__ -exec rm -rf {} +
+      - find . -type d -name .ruff_cache -exec rm -rf {} +
+      - find . -type d -name .mypy_cache -exec rm -rf {} +
+      - find . -type d -name .pytest_cache -exec rm -rf {} +
+      - find . -name "*.pyc" -delete
