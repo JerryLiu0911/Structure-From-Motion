@@ -50,7 +50,10 @@ conda env create -f environment.yml
 # 3. Install the package in editable mode
 conda run -n gf4-sfm pip install -e .
 
-# 4. Verify
+# 4. Install pre-commit hooks (runs ruff automatically on every git commit)
+conda run -n gf4-sfm pre-commit install
+
+# 5. Verify
 conda run -n gf4-sfm python main.py
 ```
 

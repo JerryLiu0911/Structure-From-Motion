@@ -18,5 +18,5 @@ dependencies:
   - pip
   - pip:
       - pycolmap>=0.6
-      - pytest>=8        # run tests with: pytest
-      - ruff>=0.4        # lint/format with: ruff check . / ruff format .
+      - ruff>=0.4        # lint/format: ruff check . / ruff format .
+      - pre-commit>=3    # install hooks once after cloning: pre-commit install
