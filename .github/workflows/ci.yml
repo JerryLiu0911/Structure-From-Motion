@@ -29,3 +29,11 @@ jobs:
 
       - name: Smoke test — package imports
         run: python -c "import gf4.week1; import gf4.week2"
+
+      - name: Run tests
+        run: |
+          if [ -d tests ]; then
+            pytest
+          else
+            echo "No tests/ directory yet — skipping"
+          fi
