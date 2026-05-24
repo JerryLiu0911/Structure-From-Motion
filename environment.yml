@@ -18,6 +18,7 @@ dependencies:
   - pip
   - pip:
       - pycolmap>=0.6
+      - opencv-stubs     # type stubs for cv2 (fixes Pylance "unresolved import")
       - ruff>=0.4        # lint/format: ruff check . / ruff format .
       - pre-commit>=3    # install hooks once after cloning: pre-commit install
       - pytest>=8        # run your tests with: pytest

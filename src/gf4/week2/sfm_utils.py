@@ -135,8 +135,11 @@ def detect_sift_features(
     image: np.ndarray,
     max_features: int = 4000,
 ) -> tuple[list[cv2.KeyPoint], np.ndarray]:
-    """Detect SIFT keypoints and descriptors.
-
+    """Detect SIFT keypoints and descriptors."""
+    sift = cv2.SIFT_create(max_features) #creates a SIFT detector that returns at most max_features keypoints.
+    keypoints, descriptors = sift.detectAndCompute(image, None) #detects keypoints and computes descriptors for the input image.)
+    return keypoints, descriptors
+    """
     TODO: Complete this function.
 
     Hints:
@@ -162,7 +165,25 @@ def precompute_image_features(
     Dataset mode should use this function so SIFT is not recomputed for the
     same image in every pair.
     """
-    raise NotImplementedError("TODO: implement feature precomputation")
+    output_list = []
+    for image_path in image_paths:
+        image = load_image(image_path, max_size=max_image_size)
+        keypoints, descriptors = detect_sift_features(image, max_features=max_features)
+        output_list.append(ImageFeatures(
+            path=image_path,
+            image=image,
+            keypoints=keypoints,
+            descriptors=descriptors,
+        ))
+        # Probably could be more efficient if implemented with a generator?
+        # yield ImageFeatures(
+        #     path=image_path,
+        #     image=image,
+        #     keypoints=keypoints,
+        #     descriptors=descriptors,
+        # )
+    return output_list
+    # raise NotImplementedError("TODO: implement feature precomputation") 
 
 
 def raw_descriptor_matches(desc1: np.ndarray, desc2: np.ndarray) -> list[cv2.DMatch]:
@@ -177,6 +198,15 @@ def raw_descriptor_matches(desc1: np.ndarray, desc2: np.ndarray) -> list[cv2.DMa
       each descriptor in image 1.
     - Return the matches sorted by descriptor distance.
     """
+
+    output_matches = []
+    if desc1.size == 0 or desc2.size == 0:
+        return output_matches
+    matcher = cv2.BFMatcher(cv2.NORM_L2)
+    matches = matcher.match(desc1, desc2)
+    output_matches = sorted(matches, key=lambda m: m.distance)
+    return output_matches
+
     raise NotImplementedError("TODO: compute raw nearest-neighbour matches")
 
 
@@ -195,6 +225,17 @@ def match_descriptors(
     - Use knnMatch(desc1, desc2, k=2) for the ratio test.
     - Keep a match when best_distance < ratio * second_best_distance.
     """
+
+    output_matches = []
+    if desc1.size == 0 or desc2.size == 0:
+        return output_matches
+    matcher = cv2.BFMatcher(cv2.NORM_L2)
+    knn_matches = matcher.knnMatch(desc1, desc2, k=2) 
+    for m, n in knn_matches:
+        if m.distance < ratio * n.distance:
+            output_matches.append(m)
+    return output_matches
+
     raise NotImplementedError("TODO: implement descriptor matching")
 
 
@@ -206,6 +247,8 @@ def count_raw_matches(desc1: np.ndarray, desc2: np.ndarray) -> int:
     A simple definition is len(raw_descriptor_matches(desc1, desc2)). This
     gives a useful denominator for comparing raw and filtered matching.
     """
+    return len(raw_descriptor_matches(desc1, desc2))
+
     raise NotImplementedError("TODO: count raw descriptor matches")
 
 
@@ -220,6 +263,12 @@ def matched_keypoint_coords(
 
     Remember: cv2.KeyPoint.pt is (x, y), not (row, column).
     """
+    if not matches:
+        return np.empty((0, 2)), np.empty((0, 2))
+    coord_array_1 = np.array([keypoints1[m.queryIdx].pt for m in matches])
+    coord_array_2 = np.array([keypoints2[m.trainIdx].pt for m in matches])
+    return coord_array_1, coord_array_2
+
     raise NotImplementedError("TODO: convert matches to coordinate arrays")
 
 
