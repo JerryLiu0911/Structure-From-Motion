@@ -29,7 +29,9 @@ htmlcov/
 coverage.xml
 
 # ─── IDEs ────────────────────────────────────────────────────────────────────
-.vscode/
+# Track .vscode/settings.json (shared project settings) but ignore personal configs
+.vscode/*
+!.vscode/settings.json
 .idea/
 *.swp
 *.swo
