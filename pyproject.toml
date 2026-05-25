@@ -22,3 +22,6 @@ sfm-week2 = "gf4.week2.week2_pipeline:main"
 # src layout — tells hatchling where the package lives
 [tool.hatch.build.targets.wheel]
 packages = ["src/gf4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
