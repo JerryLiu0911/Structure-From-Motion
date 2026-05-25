@@ -149,7 +149,10 @@ def detect_sift_features(
     """
     sift = cv2.SIFT_create(max_features) #creates a SIFT detector that returns at most max_features keypoints.
     keypoints, descriptors = sift.detectAndCompute(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), None) #detects keypoints and computes descriptors for the input image.)
-    return keypoints, descriptors
+    if descriptors is None:
+        return [], np.empty((0, 128))
+    return keypoints[:max_features], descriptors[:max_features]
+
     raise NotImplementedError("TODO: implement SIFT feature detection")
 
 
