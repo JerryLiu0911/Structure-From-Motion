@@ -15,6 +15,7 @@ from typing import Iterable
 
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -373,14 +374,74 @@ def draw_epipolar_lines(
 ) -> None:
     """Save an epipolar-line visualisation.
 
-    TODO: Complete this function.
-
-    Hints:
-    - Sample up to max_lines corresponding points.
-    - For each x1, draw l2 = F x1 in image 2.
-    - Draw the corresponding x2 point on image 2.
-    - A simple Matplotlib figure with image1 and image2 side by side is enough.
+    Draw sampled points from image1 on the left, and their corresponding
+    epipolar lines plus matching points in image2 on the right.
     """
+    n = min(max_lines, len(pts1), len(pts2))
+
+    pts1_sample = pts1[:n]
+    pts2_sample = pts2[:n]
+
+    img1_rgb = cv2.cvtColor(image1, cv2.COLOR_BGR2RGB)
+    img2_rgb = cv2.cvtColor(image2, cv2.COLOR_BGR2RGB)
+
+    height, width = image2.shape[:2]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+    ax1, ax2 = axes
+    ax1.imshow(img1_rgb)
+    ax1.set_title("Image 1 points")
+    ax1.axis("off")
+
+    ax2.imshow(img2_rgb)
+    ax2.set_title("Epipolar lines in image 2")
+    ax2.axis("off")
+
+    ax1.scatter(
+        pts1_sample[:, 0],
+        pts1_sample[:, 1],
+        s=20,
+        marker="o",
+    )
+
+    eps = 1e-12
+
+    for p1, p2 in zip(pts1_sample, pts2_sample):
+        u, v = p1[:2]
+        x1 = np.array([u, v, 1.0], dtype=float)
+
+        a, b, c = F @ x1
+
+        if abs(b) > eps:
+            x_start = 0
+            x_end = width - 1
+
+            y_start = -c / b
+            y_end = -(a * x_end + c) / b
+
+            ax2.plot([x_start, x_end], [y_start, y_end])
+        elif abs(a) > eps:
+            y_start = 0
+            y_end = height - 1
+
+            x = -c / a
+
+            ax2.plot([x, x], [y_start, y_end])
+        else:
+            # Degenerate line; skip drawing it.
+            continue
+
+        ax2.scatter(
+            p2[0],
+            p2[1],
+            s=20,
+            marker="o",
+        )
+
+    ensure_dir(output_path.parent)
+    plt.savefig(output_path)
+    plt.close(fig)
     raise NotImplementedError("TODO: implement epipolar-line visualisation")
 
 
