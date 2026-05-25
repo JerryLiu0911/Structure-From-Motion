@@ -135,11 +135,8 @@ def detect_sift_features(
     image: np.ndarray,
     max_features: int = 4000,
 ) -> tuple[list[cv2.KeyPoint], np.ndarray]:
-    """Detect SIFT keypoints and descriptors."""
-    sift = cv2.SIFT_create(max_features) #creates a SIFT detector that returns at most max_features keypoints.
-    keypoints, descriptors = sift.detectAndCompute(image, None) #detects keypoints and computes descriptors for the input image.)
-    return keypoints, descriptors
-    """
+    """Detect SIFT keypoints and descriptors.
+    
     TODO: Complete this function.
 
     Hints:
@@ -150,6 +147,9 @@ def detect_sift_features(
     - If OpenCV returns slightly more than max_features, keep only the first
       max_features keypoints and matching descriptor rows.
     """
+    sift = cv2.SIFT_create(max_features) #creates a SIFT detector that returns at most max_features keypoints.
+    keypoints, descriptors = sift.detectAndCompute(image, None) #detects keypoints and computes descriptors for the input image.)
+    return keypoints, descriptors
     raise NotImplementedError("TODO: implement SIFT feature detection")
 
 
@@ -286,6 +286,9 @@ def estimate_fundamental_ransac(
     - F: 3x3 fundamental matrix
     - inlier_mask: boolean array of shape (N,)
     """
+    F_matrix, inlier_mask = cv2.findFundamentalMat(pts1, pts2, cv2.RANSAC, threshold, confidence)
+    return F_matrix, inlier_mask
+
     raise NotImplementedError("TODO: estimate fundamental matrix with RANSAC")
 
 
@@ -301,6 +304,18 @@ def compute_epipolar_errors(
     For each point x1 in image 1, compute the epipolar line l2 = F x1.
     Then compute the distance from the corresponding x2 to l2.
     """
+
+    distances = []
+    for i in range(pts1.shape[0]):
+        x1 = np.array([pts1[i][0], pts1[i][1], 1])
+        line = F @ x1
+        a, b, c = line
+        x2 = pts2[i]
+        distance = abs(a * x2[0] + b * x2[1] + c) / np.sqrt(a**2 + b**2)
+        distances.append(distance)
+    return np.array(distances)
+    
+
     raise NotImplementedError("TODO: implement epipolar error calculation")
 
 
