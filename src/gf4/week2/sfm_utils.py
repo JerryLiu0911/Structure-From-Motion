@@ -442,7 +442,6 @@ def draw_epipolar_lines(
     ensure_dir(output_path.parent)
     plt.savefig(output_path)
     plt.close(fig)
-    raise NotImplementedError("TODO: implement epipolar-line visualisation")
 
 
 def analyse_image_pair(
@@ -454,20 +453,147 @@ def analyse_image_pair(
     max_image_size: int | None = 1600,
     save_figures: bool = True,
 ) -> PairAnalysis:
-    """Run the full Week 2 analysis for one image pair.
+    """Run the full Week 2 analysis for one image pair."""
+    # 1. Load both images
+    image1 = load_image(image1_path, max_size=max_image_size)
+    image2 = load_image(image2_path, max_size=max_image_size)
 
-    TODO: Complete this function by wiring together the utilities above.
+    # 2. Detect SIFT features
+    kp1, desc1 = detect_sift_features(image1, max_features=max_features)
+    kp2, desc2 = detect_sift_features(image2, max_features=max_features)
 
-    Expected steps:
-    1. Load both images.
-    2. Detect SIFT features.
-    3. Match descriptors with Lowe's ratio test.
-    4. Convert matches to point arrays.
-    5. Estimate F with RANSAC.
-    6. Compute epipolar errors for all filtered matches and for RANSAC inliers.
-    7. Save keypoint, raw-match, filtered-match, inlier, and epipolar-line figures.
-    8. Return a PairAnalysis object.
-    """
+    num_keypoints_1 = len(kp1)
+    num_keypoints_2 = len(kp2)
+
+    # 3. Count raw matches
+    raw_count = count_raw_matches(desc1, desc2)
+
+    # 4. Lowe-filtered matches
+    matches = match_descriptors(desc1, desc2, ratio=ratio)
+    filtered_count = len(matches)
+
+    # 5. Convert filtered matches to point arrays
+    if filtered_count > 0:
+        pts1, pts2 = matched_keypoint_coords(kp1, kp2, matches)
+    else:
+        pts1 = np.empty((0, 2), dtype=np.float32)
+        pts2 = np.empty((0, 2), dtype=np.float32)
+
+    # 6. Estimate F with RANSAC
+    F, mask = estimate_fundamental_ransac(pts1, pts2)
+
+    if mask is not None:
+        mask = mask.ravel().astype(bool)
+    else:
+        mask = np.zeros(filtered_count, dtype=bool)
+
+    inlier_count = int(mask.sum())
+    inlier_ratio = inlier_count / filtered_count if filtered_count > 0 else 0.0
+
+    # Default epipolar error fields
+    all_error_mean = None
+    all_error_median = None
+    inlier_error_mean = None
+    inlier_error_median = None
+    inlier_error_max = None
+
+    # 7. Compute epipolar errors
+    if F is not None and filtered_count > 0:
+        all_errors = compute_epipolar_errors(F, pts1, pts2)
+
+        if len(all_errors) > 0:
+            all_error_mean = float(np.mean(all_errors))
+            all_error_median = float(np.median(all_errors))
+
+        if inlier_count > 0:
+            inlier_errors = compute_epipolar_errors(F, pts1[mask], pts2[mask])
+
+            if len(inlier_errors) > 0:
+                inlier_error_mean = float(np.mean(inlier_errors))
+                inlier_error_median = float(np.median(inlier_errors))
+                inlier_error_max = float(np.max(inlier_errors))
+
+    # 8. Save figures
+    if save_figures:
+        ensure_dir(output_dir)
+
+        draw_keypoints(
+            image1,
+            kp1,
+            output_dir / "keypoints_1.png",
+        )
+
+        draw_keypoints(
+            image2,
+            kp2,
+            output_dir / "keypoints_2.png",
+        )
+
+        # Raw matches
+        raw_matches = raw_descriptor_matches(desc1, desc2)
+
+        draw_matches(
+            image1,
+            kp1,
+            image2,
+            kp2,
+            raw_matches,
+            output_dir / "matches_raw.png",
+        )
+
+        # Lowe-filtered matches
+        draw_matches(
+            image1,
+            kp1,
+            image2,
+            kp2,
+            matches,
+            output_dir / "matches_filtered.png",
+        )
+
+        # RANSAC inlier matches
+        inlier_matches = [
+            m for m, keep in zip(matches, mask)
+            if keep
+        ]
+
+        draw_matches(
+            image1,
+            kp1,
+            image2,
+            kp2,
+            inlier_matches,
+            output_dir / "matches_inliers.png",
+        )
+
+        # Epipolar lines
+        if F is not None and inlier_count > 0:
+            draw_epipolar_lines(
+                image1,
+                image2,
+                pts1[mask],
+                pts2[mask],
+                F,
+                output_dir / "epipolar_lines.png",
+            )
+
+    # 9. Return PairAnalysis
+    return PairAnalysis(
+        image_i=image1_path.name,
+        image_j=image2_path.name,
+        keypoints_i=num_keypoints_1,
+        keypoints_j=num_keypoints_2,
+        raw_matches=raw_count,
+        filtered_matches=filtered_count,
+        ransac_inliers=inlier_count,
+        inlier_ratio=float(inlier_ratio),
+        mean_epipolar_error_all=all_error_mean,
+        median_epipolar_error_all=all_error_median,
+        mean_epipolar_error_inliers=inlier_error_mean,
+        median_epipolar_error_inliers=inlier_error_median,
+        max_epipolar_error_inliers=inlier_error_max,
+        fundamental_matrix=F.tolist() if F is not None else None,
+    )
     raise NotImplementedError("TODO: implement pair analysis pipeline")
 
 
