@@ -19,7 +19,7 @@ jobs:
           cache: "pip"
 
       - name: Install package
-        run: pip install -e "."
+        run: pip install -e ".[dev]"
 
       - name: Smoke test — package imports
         run: python -c "import gf4.week1; import gf4.week2"
