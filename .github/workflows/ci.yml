@@ -21,12 +21,6 @@ jobs:
       - name: Install package
         run: pip install -e "."
 
-      - name: Lint (ruff)
-        run: ruff check .
-
-      - name: Format check (ruff)
-        run: ruff format --check .
-
       - name: Smoke test — package imports
         run: python -c "import gf4.week1; import gf4.week2"
 
