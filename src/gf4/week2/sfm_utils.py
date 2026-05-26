@@ -148,10 +148,10 @@ def detect_sift_features(
     - If OpenCV returns slightly more than max_features, keep only the first
       max_features keypoints and matching descriptor rows.
     """
-    sift = cv2.SIFT_create(max_features) #creates a SIFT detector that returns at most max_features keypoints.
-    keypoints, descriptors = sift.detectAndCompute(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), None) #detects keypoints and computes descriptors for the input image.)
+    sift = cv2.SIFT_create(max_features) # creates a SIFT detector that returns at most max_features keypoints.
+    keypoints, descriptors = sift.detectAndCompute(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), None) # returns keypoints and descriptors for the input image, after converting the image to greyscale.
     if descriptors is None:
-        return [], np.empty((0, 128))
+        return [], np.empty((0, 128)) # returns empty keypoints and descriptors if no features are found.
     return keypoints[:max_features], descriptors[:max_features]
 
     raise NotImplementedError("TODO: implement SIFT feature detection")
@@ -170,7 +170,7 @@ def precompute_image_features(
     same image in every pair.
     """
     output_list = []
-    for image_path in image_paths:
+    for image_path in image_paths: # For each image path, load the image and compute SIFT features, then store them in an ImageFeatures dataclass and append to the output list.
         image = load_image(image_path, max_size=max_image_size)
         keypoints, descriptors = detect_sift_features(image, max_features=max_features)
         output_list.append(ImageFeatures(
@@ -204,11 +204,11 @@ def raw_descriptor_matches(desc1: np.ndarray, desc2: np.ndarray) -> list[cv2.DMa
     """
 
     output_matches = []
-    if desc1.size == 0 or desc2.size == 0:
+    if desc1.size == 0 or desc2.size == 0: # edge case if descriptor arrays are empty, return an empty list of matches
         return output_matches
-    matcher = cv2.BFMatcher(cv2.NORM_L2)
-    matches = matcher.match(desc1, desc2)
-    output_matches = sorted(matches, key=lambda m: m.distance)
+    matcher = cv2.BFMatcher(cv2.NORM_L2)  # brute-force matcher using L2 norm for SIFT descriptors, cross
+    matches = matcher.match(desc1, desc2)   # returns a list of DMatch objects, which contains the best match in desc2 for each descriptor in desc1 (in index), and L2 distance between the matches
+    output_matches = sorted(matches, key=lambda m: m.distance) # sort pairs by distance
     return output_matches
 
     raise NotImplementedError("TODO: compute raw nearest-neighbour matches")
@@ -233,10 +233,10 @@ def match_descriptors(
     output_matches = []
     if desc1.size == 0 or desc2.size == 0:
         return output_matches
-    matcher = cv2.BFMatcher(cv2.NORM_L2)
-    knn_matches = matcher.knnMatch(desc1, desc2, k=2) 
+    matcher = cv2.BFMatcher(cv2.NORM_L2) # Same as raw_descriptor_matches
+    knn_matches = matcher.knnMatch(desc1, desc2, k=2) #Instead of best match, returns the top two matches also sorted by distance, for each descriptor in desc1. The output is a list of lists of DMatch objects, where each inner list contains the two best matches by clustering and sorted by distance.
     for m, n in knn_matches:
-        if m.distance < ratio * n.distance:
+        if m.distance < ratio * n.distance: # Lowe's ratio test: filters by a ratio threshold between the best and second-best matches, only keep best match if it's significantly better than the second-best match, otherwise the match is discarded
             output_matches.append(m)
     return output_matches
 
@@ -269,8 +269,8 @@ def matched_keypoint_coords(
     """
     if not matches:
         return np.empty((0, 2)), np.empty((0, 2))
-    coord_array_1 = np.array([keypoints1[m.queryIdx].pt for m in matches])
-    coord_array_2 = np.array([keypoints2[m.trainIdx].pt for m in matches])
+    coord_array_1 = np.array([keypoints1[m.queryIdx].pt for m in matches]) # m.queryIdx is the index of the descriptor in desc1, which corresponds to the keypoint in keypoints1, and .pt gives the (x, y) coordinates of that keypoint
+    coord_array_2 = np.array([keypoints2[m.trainIdx].pt for m in matches]) # similarly m.trainIdx is the index of the descriptor in desc2, etc.
     return coord_array_1, coord_array_2
 
     raise NotImplementedError("TODO: convert matches to coordinate arrays")
@@ -290,7 +290,7 @@ def estimate_fundamental_ransac(
     - F: 3x3 fundamental matrix
     - inlier_mask: boolean array of shape (N,)
     """
-    F_matrix, inlier_mask = cv2.findFundamentalMat(pts1, pts2, cv2.RANSAC, threshold, confidence)
+    F_matrix, inlier_mask = cv2.findFundamentalMat(pts1, pts2, cv2.RANSAC, threshold, confidence) # returns fundamental matrix and inlier mask of boolean values indicating which point pairs are inliers according to the RANSAC algorithm, based on the specified distance threshold and confidence level.
     return F_matrix, inlier_mask
 
     raise NotImplementedError("TODO: estimate fundamental matrix with RANSAC")
@@ -310,12 +310,12 @@ def compute_epipolar_errors(
     """
 
     distances = []
-    for i in range(pts1.shape[0]):
+    for i in range(pts1.shape[0]): # For each coordinate pair in pts1, compute the epipolar line in 
         x1 = np.array([pts1[i][0], pts1[i][1], 1])
-        line = F @ x1
+        line = F @ x1 # finds the epipolar line (aka the projection of the ray from image 1 to image 2) using the fundamental matrix
         a, b, c = line
         x2 = pts2[i]
-        distance = abs(a * x2[0] + b * x2[1] + c) / np.sqrt(a**2 + b**2)
+        distance = abs(a * x2[0] + b * x2[1] + c) / np.sqrt(a**2 + b**2) # distance from point to line formula: |ax + by + c| / sqrt(a^2 + b^2), where (x, y) is the point and ax + by + c = 0 is the line equation.
         distances.append(distance)
     return np.array(distances)
     
@@ -377,7 +377,7 @@ def draw_epipolar_lines(
     Draw sampled points from image1 on the left, and their corresponding
     epipolar lines plus matching points in image2 on the right.
     """
-    n = min(max_lines, len(pts1), len(pts2))
+    n = min(max_lines, len(pts1), len(pts2)) # number of lines to draw by finding the minimum available matches and the max_lines limit.
 
     pts1_sample = pts1[:n]
     pts2_sample = pts2[:n]
