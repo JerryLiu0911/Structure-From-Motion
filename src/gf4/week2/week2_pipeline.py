@@ -84,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         help="Lowe ratio-test threshold.",
     )
     parser.add_argument(
+        "--ransac-threshold",
+        type=float,
+        default=1.0,
+        help="RANSAC threshold for epipolar geometry estimation.",
+    )
+    parser.add_argument(
         "--min-graph-inliers",
         type=int,
         default=30,
@@ -108,6 +114,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max-features must be positive")
     if not 0.0 < args.ratio < 1.0:
         parser.error("--ratio must be between 0 and 1")
+    if args.ransac_threshold <= 0.0:
+        parser.error("--ransac-threshold must be positive")
 
     if args.max_image_size == 0:
         args.max_image_size = None
@@ -123,6 +131,7 @@ def run_pair_mode(args: argparse.Namespace) -> None:
         output_dir=output_dir,
         max_features=args.max_features,
         ratio=args.ratio,
+        ransac_threshold=args.ransac_threshold,
         max_image_size=args.max_image_size,
         save_figures=True,
     )

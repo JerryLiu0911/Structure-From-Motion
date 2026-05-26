@@ -450,6 +450,7 @@ def analyse_image_pair(
     output_dir: Path,
     max_features: int = 4000,
     ratio: float = 0.75,
+    ransac_threshold: float = 1.0,
     max_image_size: int | None = 1600,
     save_figures: bool = True,
 ) -> PairAnalysis:
@@ -480,7 +481,7 @@ def analyse_image_pair(
         pts2 = np.empty((0, 2), dtype=np.float32)
 
     # 6. Estimate F with RANSAC
-    F, mask = estimate_fundamental_ransac(pts1, pts2)
+    F, mask = estimate_fundamental_ransac(pts1, pts2, threshold=ransac_threshold)
 
     if mask is not None:
         mask = mask.ravel().astype(bool)
