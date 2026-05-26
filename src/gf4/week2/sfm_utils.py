@@ -389,7 +389,7 @@ def draw_epipolar_lines(
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
-    ax1, ax2 = axes
+    ax1, ax2 = axes # plots the two images side by side, with keypoints on the left and epipolar lines on the right.
     ax1.imshow(img1_rgb)
     ax1.set_title("Image 1 points")
     ax1.axis("off")
@@ -405,15 +405,15 @@ def draw_epipolar_lines(
         marker="o",
     )
 
-    eps = 1e-12
+    eps = 1e-12 # small epsilon to avoid division by 0 when computing line endpoints.
 
     for p1, p2 in zip(pts1_sample, pts2_sample):
         u, v = p1[:2]
         x1 = np.array([u, v, 1.0], dtype=float)
 
-        a, b, c = F @ x1
+        a, b, c = F @ x1 # Finds each epipolar line in image 2 corresponding to the point in image 1, then computes two points on the line to draw it. 
 
-        if abs(b) > eps:
+        if abs(b) > eps: # line is not vertical, no division by 0 error.
             x_start = 0
             x_end = width - 1
 
@@ -421,7 +421,7 @@ def draw_epipolar_lines(
             y_end = -(a * x_end + c) / b
 
             ax2.plot([x_start, x_end], [y_start, y_end])
-        elif abs(a) > eps:
+        elif abs(a) > eps: # if line is vertical, just plot a vertical line at x = -c/a
             y_start = 0
             y_end = height - 1
 
