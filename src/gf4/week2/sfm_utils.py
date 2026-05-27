@@ -465,7 +465,7 @@ def analyse_image_pair(
     features1 = ImageFeatures(image1_path, image1, kp1, desc1)
     features2 = ImageFeatures(image2_path, image2, kp2, desc2)
 
-    # 9. Return PairAnalysis
+    # use analyse_feature_pair
     return analyse_feature_pair(
         features1, features2, output_dir, ratio, save_figures = True)
     raise NotImplementedError("TODO: implement pair analysis pipeline")
@@ -487,21 +487,21 @@ def analyse_feature_pair(
     num_keypoints_1 = len(kp1)
     num_keypoints_2 = len(kp2)
 
-    # 3. Count raw matches
+    # 1. Count raw matches
     raw_count = count_raw_matches(desc1, desc2)
 
-    # 4. Lowe-filtered matches
+    # 2. Lowe-filtered matches
     matches = match_descriptors(desc1, desc2, ratio=ratio)
     filtered_count = len(matches)
 
-    # 5. Convert filtered matches to point arrays
+    # 3. Convert filtered matches to point arrays
     if filtered_count > 0:
         pts1, pts2 = matched_keypoint_coords(kp1, kp2, matches)
     else:
         pts1 = np.empty((0, 2), dtype=np.float32)
         pts2 = np.empty((0, 2), dtype=np.float32)
 
-    # 6. Estimate F with RANSAC
+    # 4. Estimate F with RANSAC
     F, mask = estimate_fundamental_ransac(pts1, pts2)
 
     if mask is not None:
@@ -519,7 +519,7 @@ def analyse_feature_pair(
     inlier_error_median = None
     inlier_error_max = None
 
-    # 7. Compute epipolar errors
+    # 5. Compute epipolar errors
     if F is not None and filtered_count > 0:
         all_errors = compute_epipolar_errors(F, pts1, pts2)
 
@@ -535,7 +535,7 @@ def analyse_feature_pair(
                 inlier_error_median = float(np.median(inlier_errors))
                 inlier_error_max = float(np.max(inlier_errors))
 
-        # 8. Save figures
+    # 6. Save figures
     if save_figures:
         ensure_dir(output_dir)
 
@@ -599,7 +599,7 @@ def analyse_feature_pair(
                 output_dir / "epipolar_lines.png",
             )
 
-    # 9. Return PairAnalysis
+    # 7. Return PairAnalysis
     return PairAnalysis(
         image_i=features1.path.name,
         image_j=features2.path.name,
