@@ -450,7 +450,6 @@ def analyse_image_pair(
     output_dir: Path,
     max_features: int = 4000,
     ratio: float = 0.75,
-    ransac_threshold: float = 1.0,
     max_image_size: int | None = 1600,
     save_figures: bool = True,
 ) -> PairAnalysis:
@@ -462,6 +461,28 @@ def analyse_image_pair(
     # 2. Detect SIFT features
     kp1, desc1 = detect_sift_features(image1, max_features=max_features)
     kp2, desc2 = detect_sift_features(image2, max_features=max_features)
+
+    features1 = ImageFeatures(image1_path, image1, kp1, desc1)
+    features2 = ImageFeatures(image2_path, image2, kp2, desc2)
+
+    # 9. Return PairAnalysis
+    return analyse_feature_pair(
+        features1, features2, output_dir, ratio, save_figures = True)
+    raise NotImplementedError("TODO: implement pair analysis pipeline")
+
+
+def analyse_feature_pair(
+    features1: ImageFeatures,
+    features2: ImageFeatures,
+    output_dir: Path,
+    ratio: float = 0.75,
+    save_figures: bool = False,
+) -> PairAnalysis:
+    """Run pair analysis using precomputed image features."""
+
+    kp1, kp2 = features1.keypoints, features2.keypoints
+    desc1, desc2 = features1.descriptors, features2.descriptors
+    image1, image2 = features1.image, features2.image
 
     num_keypoints_1 = len(kp1)
     num_keypoints_2 = len(kp2)
@@ -481,7 +502,7 @@ def analyse_image_pair(
         pts2 = np.empty((0, 2), dtype=np.float32)
 
     # 6. Estimate F with RANSAC
-    F, mask = estimate_fundamental_ransac(pts1, pts2, threshold=ransac_threshold)
+    F, mask = estimate_fundamental_ransac(pts1, pts2)
 
     if mask is not None:
         mask = mask.ravel().astype(bool)
@@ -514,7 +535,7 @@ def analyse_image_pair(
                 inlier_error_median = float(np.median(inlier_errors))
                 inlier_error_max = float(np.max(inlier_errors))
 
-    # 8. Save figures
+        # 8. Save figures
     if save_figures:
         ensure_dir(output_dir)
 
@@ -580,8 +601,8 @@ def analyse_image_pair(
 
     # 9. Return PairAnalysis
     return PairAnalysis(
-        image_i=image1_path.name,
-        image_j=image2_path.name,
+        image_i=features1.path.name,
+        image_j=features2.path.name,
         keypoints_i=num_keypoints_1,
         keypoints_j=num_keypoints_2,
         raw_matches=raw_count,
@@ -595,21 +616,8 @@ def analyse_image_pair(
         max_epipolar_error_inliers=inlier_error_max,
         fundamental_matrix=F.tolist() if F is not None else None,
     )
-    raise NotImplementedError("TODO: implement pair analysis pipeline")
 
-
-def analyse_feature_pair(
-    features1: ImageFeatures,
-    features2: ImageFeatures,
-    output_dir: Path,
-    ratio: float = 0.75,
-    save_figures: bool = True,
-) -> PairAnalysis:
-    """Run pair analysis using precomputed image features.
-
-    TODO: Complete this function and call it from analyse_image_pair.
-
-    This avoids recomputing SIFT features during all-pairs dataset analysis.
+    """This avoids recomputing SIFT features during all-pairs dataset analysis.
     In dataset mode, save_figures is normally False, so this function should
     return metrics without creating an output folder for every image pair.
     """
