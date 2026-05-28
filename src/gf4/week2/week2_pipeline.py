@@ -174,6 +174,7 @@ def run_dataset_mode(args: argparse.Namespace) -> None:
             output_dir=pair_output_dir,
             ratio=args.ratio,
             save_figures=False,
+            ransac_threshold=args.ransac_threshold,
         )
         rows.append(analysis.csv_dict())
 

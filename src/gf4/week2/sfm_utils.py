@@ -466,10 +466,14 @@ def analyse_image_pair(
     features1 = ImageFeatures(image1_path, image1, kp1, desc1)
     features2 = ImageFeatures(image2_path, image2, kp2, desc2)
 
-    # use analyse_feature_pair
     return analyse_feature_pair(
-        features1, features2, output_dir, ratio, save_figures = True)
-    raise NotImplementedError("TODO: implement pair analysis pipeline")
+        features1=features1,
+        features2=features2,
+        output_dir=output_dir,
+        ratio=ratio,
+        save_figures=save_figures,
+        ransac_threshold=ransac_threshold,
+    )
 
 
 def analyse_feature_pair(
@@ -478,6 +482,7 @@ def analyse_feature_pair(
     output_dir: Path,
     ratio: float = 0.75,
     save_figures: bool = False,
+    ransac_threshold: float = 1.0,
 ) -> PairAnalysis:
     """Run pair analysis using precomputed image features."""
 
@@ -503,7 +508,7 @@ def analyse_feature_pair(
         pts2 = np.empty((0, 2), dtype=np.float32)
 
     # 4. Estimate F with RANSAC
-    F, mask = estimate_fundamental_ransac(pts1, pts2)
+    F, mask = estimate_fundamental_ransac(pts1, pts2, threshold=ransac_threshold)
 
     if mask is not None:
         mask = mask.ravel().astype(bool)
