@@ -44,7 +44,7 @@ Thumbs.db
 
 # ─── Project-specific data & outputs ─────────────────────────────────────────
 # COLMAP projects folder (large binary image data — keep out of git)
-/COLMAP projects/
+/COLMAP_projects/
 
 # COLMAP databases and reconstruction outputs
 *.db

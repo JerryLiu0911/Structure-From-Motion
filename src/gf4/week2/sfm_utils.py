@@ -452,6 +452,7 @@ def analyse_image_pair(
     ratio: float = 0.75,
     max_image_size: int | None = 1600,
     save_figures: bool = True,
+    ransac_threshold: float = 1.0,
 ) -> PairAnalysis:
     """Run the full Week 2 analysis for one image pair."""
     # 1. Load both images
