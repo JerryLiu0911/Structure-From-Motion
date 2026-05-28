@@ -1,9 +1,4 @@
-"""Utility functions for GF4 Week 2 pairwise SfM front-end.
-
-This file is intentionally a starter scaffold. Basic file handling and a few
-plotting helpers are provided. The core SfM-front-end steps are marked with
-TODO and should be completed by students.
-"""
+"""Utility functions for GF4 Week 2 pairwise SfM front-end."""
 
 from __future__ import annotations
 
@@ -136,25 +131,12 @@ def detect_sift_features(
     image: np.ndarray,
     max_features: int = 4000,
 ) -> tuple[list[cv2.KeyPoint], np.ndarray]:
-    """Detect SIFT keypoints and descriptors.
-    
-    TODO: Complete this function.
-
-    Hints:
-    - Convert the image to grayscale.
-    - Create a SIFT detector with cv2.SIFT_create(nfeatures=max_features).
-    - Return keypoints and descriptors from detector.detectAndCompute(...).
-    - If no descriptors are found, return an empty array with shape (0, 128).
-    - If OpenCV returns slightly more than max_features, keep only the first
-      max_features keypoints and matching descriptor rows.
-    """
+    """Detect SIFT keypoints and descriptors."""
     sift = cv2.SIFT_create(max_features) # creates a SIFT detector that returns at most max_features keypoints.
     keypoints, descriptors = sift.detectAndCompute(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), None) # returns keypoints and descriptors for the input image, after converting the image to greyscale.
     if descriptors is None:
         return [], np.empty((0, 128)) # returns empty keypoints and descriptors if no features are found.
     return keypoints[:max_features], descriptors[:max_features]
-
-    raise NotImplementedError("TODO: implement SIFT feature detection")
 
 
 def precompute_image_features(
@@ -163,8 +145,6 @@ def precompute_image_features(
     max_image_size: int | None = 1600,
 ) -> list[ImageFeatures]:
     """Load each image and compute SIFT features once.
-
-    TODO: Complete this function after implementing detect_sift_features.
 
     Dataset mode should use this function so SIFT is not recomputed for the
     same image in every pair.
@@ -187,21 +167,10 @@ def precompute_image_features(
         #     descriptors=descriptors,
         # )
     return output_list
-    # raise NotImplementedError("TODO: implement feature precomputation") 
 
 
 def raw_descriptor_matches(desc1: np.ndarray, desc2: np.ndarray) -> list[cv2.DMatch]:
-    """Return one nearest-neighbour match per descriptor before Lowe filtering.
-
-    TODO: Complete this function.
-
-    Hints:
-    - Handle empty descriptor arrays by returning an empty list.
-    - For SIFT descriptors, use cv2.BFMatcher(cv2.NORM_L2).
-    - Use matcher.match(desc1, desc2) to get the best match in image 2 for
-      each descriptor in image 1.
-    - Return the matches sorted by descriptor distance.
-    """
+    """Return one nearest-neighbour match per descriptor before Lowe filtering."""
 
     output_matches = []
     if desc1.size == 0 or desc2.size == 0: # edge case if descriptor arrays are empty, return an empty list of matches
@@ -211,24 +180,13 @@ def raw_descriptor_matches(desc1: np.ndarray, desc2: np.ndarray) -> list[cv2.DMa
     output_matches = sorted(matches, key=lambda m: m.distance) # sort pairs by distance
     return output_matches
 
-    raise NotImplementedError("TODO: compute raw nearest-neighbour matches")
-
 
 def match_descriptors(
     desc1: np.ndarray,
     desc2: np.ndarray,
     ratio: float = 0.75,
 ) -> list[cv2.DMatch]:
-    """Match SIFT descriptors using Lowe's ratio test.
-
-    TODO: Complete this function.
-
-    Hints:
-    - Handle empty descriptor arrays by returning an empty list.
-    - For SIFT descriptors, use cv2.BFMatcher(cv2.NORM_L2).
-    - Use knnMatch(desc1, desc2, k=2) for the ratio test.
-    - Keep a match when best_distance < ratio * second_best_distance.
-    """
+    """Match SIFT descriptors using Lowe's ratio test."""
 
     output_matches = []
     if desc1.size == 0 or desc2.size == 0:
@@ -240,20 +198,14 @@ def match_descriptors(
             output_matches.append(m)
     return output_matches
 
-    raise NotImplementedError("TODO: implement descriptor matching")
-
 
 def count_raw_matches(desc1: np.ndarray, desc2: np.ndarray) -> int:
     """Return the number of descriptors that can be matched before filtering.
-
-    TODO: Complete this function.
 
     A simple definition is len(raw_descriptor_matches(desc1, desc2)). This
     gives a useful denominator for comparing raw and filtered matching.
     """
     return len(raw_descriptor_matches(desc1, desc2))
-
-    raise NotImplementedError("TODO: count raw descriptor matches")
 
 
 def matched_keypoint_coords(
@@ -263,8 +215,6 @@ def matched_keypoint_coords(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Convert OpenCV matches into aligned Nx2 coordinate arrays.
 
-    TODO: Complete this function.
-
     Remember: cv2.KeyPoint.pt is (x, y), not (row, column).
     """
     if not matches:
@@ -272,8 +222,6 @@ def matched_keypoint_coords(
     coord_array_1 = np.array([keypoints1[m.queryIdx].pt for m in matches]) # m.queryIdx is the index of the descriptor in desc1, which corresponds to the keypoint in keypoints1, and .pt gives the (x, y) coordinates of that keypoint
     coord_array_2 = np.array([keypoints2[m.trainIdx].pt for m in matches]) # similarly m.trainIdx is the index of the descriptor in desc2, etc.
     return coord_array_1, coord_array_2
-
-    raise NotImplementedError("TODO: convert matches to coordinate arrays")
 
 
 def estimate_fundamental_ransac(
@@ -284,16 +232,12 @@ def estimate_fundamental_ransac(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Estimate the fundamental matrix with OpenCV RANSAC.
 
-    TODO: Complete this function.
-
     Return:
     - F: 3x3 fundamental matrix
     - inlier_mask: boolean array of shape (N,)
     """
     F_matrix, inlier_mask = cv2.findFundamentalMat(pts1, pts2, cv2.RANSAC, threshold, confidence) # returns fundamental matrix and inlier mask of boolean values indicating which point pairs are inliers according to the RANSAC algorithm, based on the specified distance threshold and confidence level.
     return F_matrix, inlier_mask
-
-    raise NotImplementedError("TODO: estimate fundamental matrix with RANSAC")
 
 
 def compute_epipolar_errors(
@@ -302,8 +246,6 @@ def compute_epipolar_errors(
     pts2: np.ndarray,
 ) -> np.ndarray:
     """Compute point-to-epipolar-line distances in image 2.
-
-    TODO: Complete this function.
 
     For each point x1 in image 1, compute the epipolar line l2 = F x1.
     Then compute the distance from the corresponding x2 to l2.
@@ -318,9 +260,6 @@ def compute_epipolar_errors(
         distance = abs(a * x2[0] + b * x2[1] + c) / np.sqrt(a**2 + b**2) # distance from point to line formula: |ax + by + c| / sqrt(a^2 + b^2), where (x, y) is the point and ax + by + c = 0 is the line equation.
         distances.append(distance)
     return np.array(distances)
-    
-
-    raise NotImplementedError("TODO: implement epipolar error calculation")
 
 
 def draw_keypoints(
@@ -622,12 +561,6 @@ def analyse_feature_pair(
         max_epipolar_error_inliers=inlier_error_max,
         fundamental_matrix=F.tolist() if F is not None else None,
     )
-
-    """This avoids recomputing SIFT features during all-pairs dataset analysis.
-    In dataset mode, save_figures is normally False, so this function should
-    return metrics without creating an output folder for every image pair.
-    """
-    raise NotImplementedError("TODO: implement pair analysis from precomputed features")
 
 
 def draw_match_graph(

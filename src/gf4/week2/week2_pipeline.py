@@ -8,8 +8,7 @@ This script supports two modes:
 2. Dataset mode:
    python -m gf4.week2.week2_pipeline --image-dir images/ --output-dir out/ --max-images 20
 
-The core computer-vision functions live in sfm_utils.py and are intentionally
-left as TODOs for students to complete.
+The core computer-vision functions live in sfm_utils.py.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from __future__ import annotations
 import argparse
 from itertools import combinations
 from pathlib import Path
-import sys
 
 from .sfm_utils import (
     analyse_image_pair,
@@ -198,15 +196,10 @@ def run_dataset_mode(args: argparse.Namespace) -> None:
 def main() -> int:
     args = parse_args()
 
-    try:
-        if args.image1 is not None:
-            run_pair_mode(args)
-        else:
-            run_dataset_mode(args)
-    except NotImplementedError as exc:
-        print(f"\nStarter-code TODO reached: {exc}", file=sys.stderr)
-        print("Complete the relevant function in week2/sfm_utils.py and run again.", file=sys.stderr)
-        return 2
+    if args.image1 is not None:
+        run_pair_mode(args)
+    else:
+        run_dataset_mode(args)
 
     return 0
 
