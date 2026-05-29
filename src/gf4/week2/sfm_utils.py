@@ -100,6 +100,8 @@ def load_image(path: Path, max_size: int | None = None) -> np.ndarray:
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(f"Could not read image: {path}")
+    if image.ndim < 2:
+        raise ValueError(f"Image doesn't have the correct number of dimensions: {path}")
 
     if max_size is not None:
         height, width = image.shape[:2]
@@ -221,7 +223,7 @@ def matched_keypoint_coords(
         return np.empty((0, 2)), np.empty((0, 2))
     coord_array_1 = np.array([keypoints1[m.queryIdx].pt for m in matches]) # m.queryIdx is the index of the descriptor in desc1, which corresponds to the keypoint in keypoints1, and .pt gives the (x, y) coordinates of that keypoint
     coord_array_2 = np.array([keypoints2[m.trainIdx].pt for m in matches]) # similarly m.trainIdx is the index of the descriptor in desc2, etc.
-    return coord_array_1, coord_array_2
+    return coord_array_1,coord_array_2
 
 
 def estimate_fundamental_ransac(
@@ -395,15 +397,25 @@ def analyse_image_pair(
 ) -> PairAnalysis:
     """Run the full Week 2 analysis for one image pair."""
     # 1. Load both images
-    image1 = load_image(image1_path, max_size=max_image_size)
-    image2 = load_image(image2_path, max_size=max_image_size)
+    try:
+        image1 = load_image(image1_path, max_size=max_image_size)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load image '{image1_path}'") from e
+    try:
+        image2 = load_image(image2_path, max_size=max_image_size)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load image '{image2_path}'") from e
 
     # 2. Detect SIFT features
-    kp1, desc1 = detect_sift_features(image1, max_features=max_features)
-    kp2, desc2 = detect_sift_features(image2, max_features=max_features)
+    try:
+        kp1, desc1 = detect_sift_features(image1, max_features=max_features)
+        kp2, desc2 = detect_sift_features(image2, max_features=max_features)
 
-    features1 = ImageFeatures(image1_path, image1, kp1, desc1)
-    features2 = ImageFeatures(image2_path, image2, kp2, desc2)
+
+        features1 = ImageFeatures(image1_path, image1, kp1, desc1)
+        features2 = ImageFeatures(image2_path, image2, kp2, desc2)
+    except Exception as e:
+        raise RuntimeError(f"Failed to detect sift features") from e
 
     return analyse_feature_pair(
         features1=features1,
@@ -433,29 +445,42 @@ def analyse_feature_pair(
     num_keypoints_2 = len(kp2)
 
     # 1. Count raw matches
-    raw_count = count_raw_matches(desc1, desc2)
+    try:
+        raw_count = count_raw_matches(desc1, desc2)
+    except Exception as e:
+        raise RuntimeError("Phase 1 (counting raw matches) failed.") from e
 
     # 2. Lowe-filtered matches
-    matches = match_descriptors(desc1, desc2, ratio=ratio)
-    filtered_count = len(matches)
+    try:
+        matches = match_descriptors(desc1, desc2, ratio=ratio)
+        filtered_count = len(matches)
+    except Exception as e:
+        raise RuntimeError("Phase 2 (Lowe-filtering) failed.") from e
+
 
     # 3. Convert filtered matches to point arrays
-    if filtered_count > 0:
-        pts1, pts2 = matched_keypoint_coords(kp1, kp2, matches)
-    else:
-        pts1 = np.empty((0, 2), dtype=np.float32)
-        pts2 = np.empty((0, 2), dtype=np.float32)
+    try:
+        if filtered_count > 0:
+            pts1, pts2 = matched_keypoint_coords(kp1, kp2, matches)
+        else:
+            pts1 = np.empty((0, 2), dtype=np.float32)
+            pts2 = np.empty((0, 2), dtype=np.float32)
+    except Exception as e:
+        raise RuntimeError("Phase 3 (Converting filtered matches to point arrays) failed.") from e
 
     # 4. Estimate F with RANSAC
-    F, mask = estimate_fundamental_ransac(pts1, pts2, threshold=ransac_threshold)
+    try:
+        F, mask = estimate_fundamental_ransac(pts1, pts2, threshold=ransac_threshold)
 
-    if mask is not None:
-        mask = mask.ravel().astype(bool)
-    else:
-        mask = np.zeros(filtered_count, dtype=bool)
+        if mask is not None:
+            mask = mask.ravel().astype(bool)
+        else:
+            mask = np.zeros(filtered_count, dtype=bool)
 
-    inlier_count = int(mask.sum())
-    inlier_ratio = inlier_count / filtered_count if filtered_count > 0 else 0.0
+        inlier_count = int(mask.sum())
+        inlier_ratio = inlier_count / filtered_count if filtered_count > 0 else 0.0
+    except Exception as e:
+        raise RuntimeError("Phase 4 (Estimation of F with RANSAC) failed.") from e
 
     # Default epipolar error fields
     all_error_mean = None
@@ -465,84 +490,90 @@ def analyse_feature_pair(
     inlier_error_max = None
 
     # 5. Compute epipolar errors
-    if F is not None and filtered_count > 0:
-        all_errors = compute_epipolar_errors(F, pts1, pts2)
+    try:
+        if F is not None and filtered_count > 0:
+            all_errors = compute_epipolar_errors(F, pts1, pts2)
 
-        if len(all_errors) > 0:
-            all_error_mean = float(np.mean(all_errors))
-            all_error_median = float(np.median(all_errors))
+            if len(all_errors) > 0:
+                all_error_mean = float(np.mean(all_errors))
+                all_error_median = float(np.median(all_errors))
 
-        if inlier_count > 0:
-            inlier_errors = compute_epipolar_errors(F, pts1[mask], pts2[mask])
+            if inlier_count > 0:
+                inlier_errors = compute_epipolar_errors(F, pts1[mask], pts2[mask])
 
-            if len(inlier_errors) > 0:
-                inlier_error_mean = float(np.mean(inlier_errors))
-                inlier_error_median = float(np.median(inlier_errors))
-                inlier_error_max = float(np.max(inlier_errors))
+                if len(inlier_errors) > 0:
+                    inlier_error_mean = float(np.mean(inlier_errors))
+                    inlier_error_median = float(np.median(inlier_errors))
+                    inlier_error_max = float(np.max(inlier_errors))
+    except Exception as e:
+        raise RuntimeError("Phase 5 (Compute epipolar errors) failed.") from e
 
     # 6. Save figures
-    if save_figures:
-        ensure_dir(output_dir)
+    try:
+        if save_figures:
+            ensure_dir(output_dir)
 
-        draw_keypoints(
-            image1,
-            kp1,
-            output_dir / "keypoints_1.png",
-        )
-
-        draw_keypoints(
-            image2,
-            kp2,
-            output_dir / "keypoints_2.png",
-        )
-
-        # Raw matches
-        raw_matches = raw_descriptor_matches(desc1, desc2)
-
-        draw_matches(
-            image1,
-            kp1,
-            image2,
-            kp2,
-            raw_matches,
-            output_dir / "matches_raw.png",
-        )
-
-        # Lowe-filtered matches
-        draw_matches(
-            image1,
-            kp1,
-            image2,
-            kp2,
-            matches,
-            output_dir / "matches_filtered.png",
-        )
-
-        # RANSAC inlier matches
-        inlier_matches = [
-            m for m, keep in zip(matches, mask)
-            if keep
-        ]
-
-        draw_matches(
-            image1,
-            kp1,
-            image2,
-            kp2,
-            inlier_matches,
-            output_dir / "matches_inliers.png",
-        )
-
-        # Epipolar lines
-        if F is not None and inlier_count > 0:
-            draw_epipolar_lines(
+            draw_keypoints(
                 image1,
-                image2,
-                pts1[mask],
-                pts2[mask],
-                F,
-                output_dir / "epipolar_lines.png",
+                kp1,
+                output_dir / "keypoints_1.png",
             )
+
+            draw_keypoints(
+                image2,
+                kp2,
+                output_dir / "keypoints_2.png",
+            )
+
+            # Raw matches
+            raw_matches = raw_descriptor_matches(desc1, desc2)
+
+            draw_matches(
+                image1,
+                kp1,
+                image2,
+                kp2,
+                raw_matches,
+                output_dir / "matches_raw.png",
+            )
+
+            # Lowe-filtered matches
+            draw_matches(
+                image1,
+                kp1,
+                image2,
+                kp2,
+                matches,
+                output_dir / "matches_filtered.png",
+            )
+
+            # RANSAC inlier matches
+            inlier_matches = [
+                m for m, keep in zip(matches, mask)
+                if keep
+            ]
+
+            draw_matches(
+                image1,
+                kp1,
+                image2,
+                kp2,
+                inlier_matches,
+                output_dir / "matches_inliers.png",
+            )
+
+            # Epipolar lines
+            if F is not None and inlier_count > 0:
+                draw_epipolar_lines(
+                    image1,
+                    image2,
+                    pts1[mask],
+                    pts2[mask],
+                    F,
+                    output_dir / "epipolar_lines.png",
+                )
+    except Exception as e:
+        raise RuntimeError("Phase 6 (Saving images) failed.") from e
 
     # 7. Return PairAnalysis
     return PairAnalysis(
