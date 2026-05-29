@@ -1,169 +1,300 @@
-% GF4 — Individual report (draft)
-\documentclass[11pt,a4paper]{article}
+% GF4 — Individual Report 2
+\documentclass[10pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{microtype}
 \usepackage{geometry}
-\geometry{margin=1in}
-\title{GF4 — Week 2: Pairwise Matching and Epipolar Geometry}
-\author{Your Name (replace)}
-\date{28 May 2026}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{parskip}
+\geometry{top=0.65in, bottom=0.65in, left=0.72in, right=0.72in}
+\setlength{\parskip}{3pt}
+\title{\vspace{-1.2em}GF4 — Week 2: Pairwise Matching and Epipolar Geometry\vspace{-0.4em}}
+\author{Jerry Liu (yhl63@cam.ac.uk)}
+\date{29 May 2026}
 
 \begin{document}
-\maketitle
-\sloppy
+\maketitle\vspace{-1em}
 
-% Page 1: brief theory answers and overview
-\section*{1. Brief theory answers}
-\textbf{What is the epipolar constraint?}
-The epipolar constraint states that for a point $\mathbf{x}$ in image 1 and its
-corresponding point $\mathbf{x}'$ in image 2, $\mathbf{x}'^{\top} F \mathbf{x}=0$,
-where $F$ is the fundamental matrix. It enforces that $\mathbf{x}'$ lies on the
-epipolar line induced by $\mathbf{x}$.
+%----------------------------------------------------------------------
+\section*{1. Brief Theory}
+\vspace{-0.3em}
+\textbf{The Epipolar constraint :}
+For corresponding points $\mathbf{x}$, $\mathbf{x}'$ in two images,
+$\mathbf{x}'^{\!\top}F\mathbf{x}=0$, where $F$ is the fundamental matrix. This maps the projection of the ray normal to the plane of the first image to the epipolar line in the second image, on which the corresponding point $\mathbf{x}'$ must lie,
+reducing the correspondence search from 2-D to 1-D.
 
-\textbf{What does the fundamental matrix represent?}
-The fundamental matrix $F$ encodes the projective geometry between two views;
-it maps points in one image to epipolar lines in the other and contains the
-relative camera motion (up to a projective scale) and the intrinsic/extrinsic
-relation between the views.
+\textbf{The Fundamental matrix :}
+$F$ ($3\times3$, rank 2, 7 degrees of freedom) encodes the complete projective geometry between two
+uncalibrated views: it maps any point in one image to its epipolar line in the
+other, capturing the relative pose and the epipoles through its null spaces.
 
-\textbf{Why is RANSAC needed for estimating the fundamental matrix?}
-Feature matches contain outliers. RANSAC robustly fits $F$ by sampling minimal
-subsets and selecting the model with maximal inlier support, avoiding biased
-estimates from outliers.
+\textbf{Using RANSAC for estimating $F$ :}
+Feature matches can often contain outliers (false correspondences). RANSAC iteratively
+samples minimal 8-point subsets (7-DOF) to fit $F$ and counts inliers; the hypothesis
+with most inlier support is retained, making the estimate robust to the high
+outlier fractions typical in raw nearest-neighbour matches.
 
-\textbf{Why might many matches still be bad for 3D reconstruction?}
-Many matches can be concentrated on non-textured planar regions or repetitive
-patterns, or be dominated by mismatches; high match counts do not guarantee
-baseline, diversity of viewpoints, or good geometric conditioning for
-triangulation.
+\textbf{Why having many matches does not necessarily lead to good reconstruction.}
+Despite a high number of matches, geometrically inconsistent matches or matches that lack sufficient parallax can lead to poor $F$ estimation and inaccurate epipolar geometry.
+Such cases can include matches that are all clustered in a small region of the image, which may not provide enough parallax for accurate triangulation, or matches that arise from repetitive texture with false correspondences. It is
+the quality rather than the sheer count of matches that guarantee geometric diversity or epipolar accuracy.
 
-\section*{2. Feature and matching results}
-\begin{figure}[ht]
-	\centering
-	\includegraphics[width=0.48\linewidth]{"/home/jerryliu930911/Structure-From-Motion/out/test_pair/keypoints_1.png"}
-	\hfill
-	\includegraphics[width=0.48\linewidth]{"/home/jerryliu930911/Structure-From-Motion/out/test_pair/keypoints_2.png"}
-	\caption{Keypoint visualisations for the good pair.}
+%----------------------------------------------------------------------
+\section*{2. Feature and Matching Results}
+\vspace{-0.3em}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.47\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/test_pair/keypoints_1.png}
+  \hfill
+  \includegraphics[width=0.47\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/test_pair/keypoints_2.png}
+  \vspace{-0.5em}
+  \caption{Keypoint visualisations: image 1 (left) and image 2 (right) of the good pair.}
 \end{figure}
+\vspace{-0.8em}
 
+We observe that features are highly concentrated on the body of the plush dog due
+to the high-contrast, repetitive texture, which provides many distinctive keypoints that
+allows SIFT to reliably detect across scales. In contrast, the white mattress surface is 
+nearly featureless, with its uniform albedo and low-gradient regions yielding almost no detections.
+The dark background (walls, furniture edges) contributes a small number of large-scale keypoints at structural boundaries.
+
+
+\begin{table}[H]
+\centering\small
+\vspace{-0.3em}
+\caption{Matching summary for the "good pair".}
+\vspace{-0.3em}
 \begin{tabular}{lr}
-\begin{center}
 \toprule
 Metric & Value \\
 \midrule
-Keypoints (image 1) & 156 \\
-Keypoints (image 2) & 1277 \\
-Raw matches & 1567 \\
-Filtered (Lowe 0.75) & 94 \\
+Keypoints in image 1 & 1567 \\
+Keypoints in image 2 & 1277 \\
+Raw (1-NN) matches & 1567 \\
+Filtered matches (Lowe ratio 0.75) & 94 \\
 RANSAC inliers & 53 \\
-Inlier ratio & 0.5638 \\
-Median epipolar error (all filtered) (px) & 0.5564 \\
-Median epipolar error (RANSAC inliers) (px) & 0.2419 \\
-\caption{Summary metrics (from \texttt{out/test\_pair/pair\_metrics.csv}):}
+Inlier ratio & 0.564 \\
+Median epipolar error, all filtered (px) & 0.556 \\
+Median epipolar error, RANSAC inliers (px) & 0.242 \\
 \bottomrule
-\end{center}
 \end{tabular}
+\end{table}
+\vspace{-0.6em}
 
-\begin{figure}[ht]
-	\centering
-	\includegraphics[width=0.48\linewidth]{"/home/jerryliu930911/Structure-From-Motion/out/test_pair/matches_raw.png"}
-	\hfill
-	\includegraphics[width=0.48\linewidth]{"/home/jerryliu930911/Structure-From-Motion/out/test_pair/matches_filtered.png"}
-	\caption{Left: raw nearest-neighbour matches. Right: Lowe-filtered matches (ratio=0.75).}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.47\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/test_pair/matches_raw.png}
+  \hfill
+  \includegraphics[width=0.47\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/test_pair/matches_filtered.png}
+  \vspace{-0.5em}
+  \caption{Left: all 1567 raw nearest-neighbour matches. Right: 94 Lowe-filtered
+    matches (ratio\,$=$\,0.75).}
 \end{figure}
+\vspace{-0.5em}
 
-Short qualitative comment on false matches: the filtered set (ratio=0.75)
-still contains some correspondences on repetitive textures and near image
-boundaries; these are plausible candidates for mismatch because descriptor
-distinctiveness is lower at similar local patches.
+The filtered set is dominated by the plush-body correspondences, which are largely
+correct. However, a few matches cross structurally similar textured rows that are
+replicated along the plush dog's body, as these locally similar patch neighbourhoods
+ yield near-equal nearest/second-nearest descriptor distances just below the 0.75 threshold.
 
-\section*{3. Fundamental matrix and epipolar geometry}
-RANSAC inlier visualisation and epipolar lines are in the figures below.
-\begin{figure}[ht]
-	\centering
-	\includegraphics[width=0.60\linewidth]{"/home/jerryliu930911/Structure-From-Motion/out/test_pair/matches_inliers.png"}
-	\caption{RANSAC inliers visualised (subset shown).}
+%----------------------------------------------------------------------
+\section*{3. Fundamental Matrix and Epipolar Geometry}
+\vspace{-0.3em}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.5\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/test_pair/matches_inliers.png}
+  \hfill
+  \includegraphics[width=0.7\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/test_pair/epipolar_lines.png}
+  \vspace{-0.5em}
+  \caption{Top: RANSAC inlier matches. Bottom: epipolar-line visualisation
+    (selected inlier points in image 1, corresponding epipolar lines in image 2).}
 \end{figure}
+\vspace{-0.4em}
 
-\begin{figure}[ht]
-	\centering
-	\includegraphics[width=0.80\linewidth]{"/home/jerryliu930911/Structure-From-Motion/out/test_pair/epipolar_lines.png"}
-	\caption{Epipolar-line visualisation for inlier matches.}
+Epipolar lines in image 2 converge toward a single epipole which is consistent with the
+camera motion, confirming a well-estimated $F$.
+RANSAC retained 53 inliers (inlier ratio 0.564) from 94 filtered matches.
+The median epipolar error for RANSAC inliers is 0.242 px and for all
+94 filtered matches 0.556 px which are both sub-pixel, suggesting that the
+recovered geometry is accurate.
+
+%----------------------------------------------------------------------
+\section*{4. Good Pair vs.\ Bad Pair}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.47\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/bad_pair/matches_inliers.png}
+  \hfill
+  \includegraphics[width=0.47\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/bad_pair/epipolar_lines.png}
+  \vspace{-0.5em}
+  \caption{Top: RANSAC inlier matches. Bottom: epipolar-line visualisation
+    (selected inlier points in image 1, corresponding epipolar lines in image 2).}
 \end{figure}
+\vspace{-0.4em}
 
-\section*{4. Good pair vs bad pair (baseline \texttt{bad\_pair})}
-Metrics (good = \texttt{test\_pair}, bad = \texttt{bad\_pair} from \texttt{out/bad\_pair/pair\_metrics.csv}):
+\vspace{-0.3em}
+\begin{table}[H]
+\centering\small
+\vspace{-0.3em}
+\caption{Comparison: good pair vs. bad pair}
+\vspace{-0.3em}
 \begin{tabular}{lrr}
 \toprule
 Metric & Good pair & Bad pair \\
 \midrule
-Number keypoints (img1) & 1567 & 2535 \\
-Number keypoints (img2) & 1277 & 2259 \\
+Keypoints in image 1 & 1567 & 2535 \\
+Keypoints in image 2 & 1277 & 2259 \\
 Raw matches & 1567 & 2535 \\
 Filtered matches (ratio 0.75) & 94 & 17 \\
 RANSAC inliers & 53 & 8 \\
-Inlier ratio & 0.5638 & 0.4706 \\
-Median epipolar error (all filtered) (px) & 0.5564 & 20.4293 \\
-Median epipolar error (RANSAC inliers) (px) & 0.2419 & $\approx 0$ \\
-Main observed failure & low-quality filtered set; many spatially-clustered matches & small number of filtered matches; large epipolar residuals \\
+Inlier ratio & 0.564 & 0.471 \\
+Median epipolar error, all filtered (px) & 0.556 & 20.43 \\
+Median epipolar error, RANSAC inliers (px) & 0.242 & $\approx$0$^{*}$ \\
+Main observed failure & None & $<$9 true inliers; $F$ unreliable \\
+\bottomrule
+\multicolumn{3}{l}{\footnotesize $^{*}$Near-zero inlier error with 8 points is
+  an artefact: RANSAC overfits to the minimal set (see text).}
+\end{tabular}
+\end{table}
+\vspace{-0.3em}
+
+The bad pair images show the same object in the same position, but from completely different viewpoints, leading to 
+low overlap and a drastically different background and illumination. This causes SIFT to detect many keypoints on the background in image 2 that have no true correspondences in image 1, resulting in a large number of false matches.
+The nearest and second-nearest descriptor
+distances are near-equal for these false matches, so 99.3\% fail the ratio test
+(only 17/2535 survive).
+With merely 8 RANSAC inliers, the estimate can be considered degenerate the near-zero reported inlier error results
+from RANSAC overfitting rather than correct geometry, as confirmed by the
+20.43\,px median error over all 17 filtered matches.
+
+%----------------------------------------------------------------------
+\section*{5. Targeted Sensitivity Analysis (pair mode only)}
+\vspace{-0.3em}
+\begin{table}[H]
+\centering\small
+\vspace{-0.2em}
+\caption{Sensitivity on the good pair.
+  Study~1: Lowe ratio (RANSAC thr.\,=\,1.0\,px fixed).
+  Study~2: RANSAC threshold (ratio\,=\,0.75 fixed).}
+\vspace{-0.3em}
+\begin{tabular}{llrrrr}
+\toprule
+Study & Setting & Filtered & Inliers & Inlier ratio & Med.\ epi.\ (px) \\
+\midrule
+\multirow{2}{*}{1} & ratio\,=\,0.75 & 94  & 53 & 0.564 & 0.556\,(all filt.) \\
+                   & ratio\,=\,0.90 & 406 & 39 & 0.096 & 30.16\,(all filt.) \\
+\midrule
+\multirow{2}{*}{2} & RANSAC threshold\,=\,1.0\,px & 94 & 53 & 0.564 & 0.242\,(inliers) \\
+                   & RANSAC threshold\,=\,2.0\,px  & 94 & 59 & 0.628 & 0.280\,(inliers) \\
 \bottomrule
 \end{tabular}
+\end{table}
+\vspace{-0.4em}
 
-\section*{5. Targeted sensitivity analysis (pair mode only)}
-Two single-variable studies (results saved in \texttt{out/}):
-\begin{enumerate}
-	\item Lowe ratio: baseline 0.75 (good: filtered=94, inliers=53, inlier ratio=0.564) vs 0.90 (good: filtered=406, inliers=39, inlier ratio=0.096). Increasing the ratio raises filtered matches but dramatically increases false matches (lower inlier ratio and higher median epipolar errors), so 0.75 is preferable.
-	\item RANSAC threshold: baseline 1.0 vs 20.0 (larger threshold). With RANSAC threshold=20 the good pair had inliers=59 (higher) and inlier ratio increased to 0.6277 while median inlier epipolar error stayed small; increasing threshold accepts more matches but risks including geometrically poorer correspondences. I will use ratio=0.75 and RANSAC threshold=1.0 for Week 3 to prioritise geometric accuracy.
-\end{enumerate}
+\textbf{Study~1:} ratio\,=\,0.90 admits 4$\times$ more matches but inlier ratio
+decreases from 56\,\% to 10\,\% and median epipolar error rises to 30\,px ---
+a flood of false matches RANSAC cannot reject.
+\textbf{Study~2:} threshold\,=\,2.0\,px gains 6 inliers at worse accuracy
+(0.280 vs.\ 0.242\,px).
+We therefore choose the default settings (ratio\,=\,0.75, threshold\,=\,1.0\,px) for a balance of inlier quality and quantity.
 
-\section*{6. Pairwise image-set analysis}
-The pairwise match graph is saved at \texttt{out/dataset-partial-doge/match\_graph.png}.
+%----------------------------------------------------------------------
+\section*{6. Pairwise Image-Set Analysis}
+\vspace{-0.3em}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\linewidth]{%
+    /home/jerryliu930911/Structure-From-Motion/out/dataset-partial-doge/match_graph.png}
+  \vspace{-0.5em}
+  \caption{Pairwise match graph for the sub-sampled dog dataset	.
+    Node size indicates keypoint count; edge weight shows RANSAC inlier count for pairs which have more than 30 inliers.}
+\end{figure}
+\vspace{-0.5em}
 
-Top 3 candidate initial pairs (from \texttt{out/dataset-partial-doge/top\_initial\_pairs.csv}):
+The graph forms a near-ring topology, strong edges connect consecutive captures
+(adjacent nodes), while long-range edges are weak or absent. This is likely due to the camera movement pattern during capture, 
+which involved a slow, continuous sweep to about the dog, resulting in high overlap between temporally adjacent images and low overlap between non-adjacent ones.
+Top 3 candidate initial pairs (from \texttt{top\_initial\_pairs.csv}):
+
+\begin{table}[H]
+\centering\small
+\vspace{-0.3em}
 \begin{tabular}{lrrr}
 \toprule
-Candidate pair & RANSAC inliers & Inlier ratio & Median epipolar error \\
+Candidate pair & Inliers & Inlier ratio & Med.\ epi.\ (px) \\
 \midrule
-PXL\_20260519\_151333412.jpg -- PXL\_20260519\_151333953.jpg & 923 & 0.8523 & 0.3056 \\
-PXL\_20260519\_151332564.jpg -- PXL\_20260519\_151333412.jpg & 911 & 0.8643 & 0.2076 \\
-PXL\_20260519\_151334796.jpg -- PXL\_20260519\_151335385.jpg & 836 & 0.8681 & 0.2118 \\
+\texttt{...151333412} -- \texttt{...151333953} & 923 & 0.852 & 0.306 \\
+\texttt{...151332564} -- \texttt{...151333412} & 911 & 0.864 & \textbf{0.208} \\
+\texttt{...151334796} -- \texttt{...151335385} & 836 & 0.868 & 0.212 \\
 \bottomrule
 \end{tabular}
+\end{table}
+\vspace{-0.4em}
 
-\section*{7. Group dynamics}
-Replace these with real names and short contributions (2--3 sentences each):
-\begin{itemize}
-	\item Member A: implemented feature-detection and matching helpers, ran dataset experiments.
-	\item Member B: implemented RANSAC/F estimation wrappers and visualisations.
-	\item Member C (you): assembled pairwise analysis, sensitivity experiments, and this report.
+All three image pairs are temporally consecutive and exhibit strong geometric consistency, with more than 800 inliers, inlier ratios exceeding 0.85, and sub-pixel median epipolar errors below 0.31 px. These metrics indicate substantial overlap between the images and a well-conditioned estimation of the epipolar geometry.
+\textbf{Preferred initial pair: \texttt{151332564}--\texttt{151333412}} (highest
+inlier ratio, lowest median epipolar error of 0.208\,px), giving the most
+reliable seed for incremental reconstruction.
+
+%----------------------------------------------------------------------
+\section*{7. Group Dynamics}
+\vspace{-0.3em}
+\begin{itemize}\setlength\itemsep{0pt}
+  \item \textbf{Jerry (yhl63):} Setup shared workspace, implemented phases A and B functions such as SIFT keypoint detection, knn matching, Lowe ratio filtering, and RANSAC-based $F$ estimation, as well as the dataset-mode processing.
+  \item \textbf{Jashwanth (jp2057):} Implemented phases C and D, including epipolar line visualisation, image-pair analysis and conducted the targeted sensitivity analysis between good and bad pairs.
+  \item \textbf{Roksy (ri302):} Implemented phase E of refactoring feature-pair analysis and performing dataset-wide pairwise analysis.
 \end{itemize}
 
-\section*{8. Experiment log (page 4)}
-\subsection*{Implementation steps}
-\begin{itemize}
-	\item Implemented and validated SIFT detection, matching, and pair-analysis pipeline using the provided CLI \texttt{sfm-week2}.
-	\item Ran dataset mode for \texttt{Partial\_doge} to produce \texttt{out/dataset-partial-doge/*} (pairwise metrics and graph).
-	\item Selected \texttt{test\_pair} as the good example and \texttt{bad\_pair} as baseline; saved per-pair figures under \texttt{out/test\_pair/} and \texttt{out/bad\_pair/}.
-\end{itemize}
+\section*{8. Experiment Log (Page 4)}
+\small
+\subsection*{Implementation steps and group contributions}
+
+Shared repository and working environment setup, as well as calling opencv functions for SIFT and RANSAC, were completed by Jerry, followed by implementations of the epipolar line visualisation and image-pair analysis pipeline by Jashwanth.
+Image datasets were the same as week1, where the dataset with the most succesful reconstruction were used as image pairs for week2. The dataset-wide pairwise analysis was conducted by Roksy, who also generated the pairwise metrics and match graph for the sub-sampled dog dataset.
 
 \subsection*{Debugging record}
-What went wrong: some parameter choices produced too many false matches (high
-median epipolar error). Diagnosis: inspected \texttt{matches\_filtered.png},
-\texttt{matches\_inliers.png} and the numeric medians in \texttt{pair\_metrics.csv}. Evidence of
-fix: sensitivity runs \texttt{ratio\_090\_*} and \texttt{ransac\_20\_*} show expected changes in
-filtered counts and inlier ratios.
+No major bugs were encountered, but some unexpected results prompted deeper investigation:
+
+\textbf{Ratio\,=\,0.90 gave fewer RANSAC inliers than ratio\,=\,0.75.}
+Expected: more filtered matches $\Rightarrow$ more inliers.
+Actual: inlier ratio fell from 56\,\% to 10\,\%.
+Diagnosis: \texttt{matches\_filtered.png} showed geometrically inconsistent
+lines; \texttt{median\_epipolar\_error\_all} rose to 30\,px, confirming a
+flood of ambiguous false matches that overwhelmed RANSAC.
+Fix: retain ratio\,=\,0.75.
+
+\textbf{ Bad pair: near-zero RANSAC inlier error despite broken geometry.}
+RANSAC reported almost 0px inlier error, yet
+\texttt{median\_epipolar\_error\_all}$=$20.43\,px.
+Diagnosis: 8 inliers fitting a 7-DOF model $\Rightarrow$ RANSAC overfits a
+degenerate subset. The all-matches median is the true diagnostic.
 
 \subsection*{Experiment choices}
-Tried multiple Lowe ratios and RANSAC thresholds on \texttt{test\_pair} and \texttt{bad\_pair}.
-Final choice for Week 3: Lowe ratio = 0.75, RANSAC threshold = 1.0 to prioritise
-precision of inliers for robust triangulation.
+
+\textbf{Good pair} (\texttt{test\_pair}): same toy, same session, moderate
+baseline; chosen because epipolar lines converge and inlier error is sub-pixel.
+
+\textbf{Bad pair} (\texttt{bad\_pair}): same toy photographed in entirely
+different rooms; chosen to show the ratio-test failure when backgrounds differ.
+
+\textbf{Sensitivity:} pair mode only, one variable at a time on
+\texttt{test\_pair}.
+Surprising finding: the drop from 56\,\% to 10\,\% inlier ratio at
+ratio\,=\,0.90 was larger than anticipated --- a modest ratio relaxation
+can be catastrophic for RANSAC when it tips the outlier majority.
 
 \subsection*{AI and external assistance}
-State here what external guidance you used (course materials, COLMAP
-documentation, peers). If you used AI for conceptual help, declare it here.
+[Declare what AI tools you used for \emph{learning concepts} or reading
+documentation (e.g.\ the 8-point algorithm, OpenCV API).
+Do \textbf{not} include tools used to write, edit, test, or debug code.]
 
-\vfill
-\noindent{This report accompanies the code and outputs in the repository `out/`.}
 \end{document}
