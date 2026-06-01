@@ -649,7 +649,7 @@ def draw_match_graph(
 def select_top_initial_pairs(rows: list[dict], top_k: int = 10) -> list[dict]:
     """Select candidate Week 3 initial pairs from pairwise metrics.
 
-    This starter version ranks by RANSAC inlier count first, then inlier ratio.
+    This starter version ranks by RANSAC inlier count first, then53 inlier ratio.
     Students should inspect the images too: the best numerical pair may have too
     little baseline for triangulation.
     """

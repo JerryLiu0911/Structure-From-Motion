@@ -54,7 +54,6 @@ outputs/
 results/
 
 # Image data directories (use !path to explicitly un-ignore specific tracked sets)
-images/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
