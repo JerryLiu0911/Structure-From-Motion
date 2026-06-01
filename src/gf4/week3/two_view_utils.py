@@ -127,6 +127,15 @@ def estimate_essential_matrix(
     TODO: Complete this function.
 
     """
+    E, mask = cv2.findEssentialMat(
+        pts1,
+        pts2,
+        cameraMatrix=K,
+        method=cv2.RANSAC,
+        prob=confidence,
+        threshold=threshold,
+    )
+    return E, mask
     raise NotImplementedError("TODO: estimate essential matrix")
 
 
@@ -142,6 +151,10 @@ def recover_relative_pose(
     TODO: Complete this function.
 
     """
+    
+    _, R, t, mask = cv2.recoverPose(E, pts1, pts2, K, inlier_mask)
+    return R, t, mask
+
     raise NotImplementedError("TODO: recover relative pose")
 
 
@@ -154,6 +167,12 @@ def make_projection_matrices(
 
     TODO: Complete this function.
     """
+
+    zero_t = np.zeros((3, 1), dtype=np.float64)
+    P1 = K @ np.hstack((np.eye(3), zero_t))
+    P2 = K @ np.hstack((R, t.reshape(3, 1)))
+    return P1, P2
+
     raise NotImplementedError("TODO: create projection matrices")
 
 
@@ -169,6 +188,15 @@ def triangulate_points(
     TODO: Complete this function.
 
     """
+
+    P1, P2 = make_projection_matrices(K, R, t)
+    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+
+    # Convert to 3D points
+    points3d = points4d_hom[:3] / points4d_hom[3]
+
+    return points3d
+
     raise NotImplementedError("TODO: triangulate 3D points")
 
 
