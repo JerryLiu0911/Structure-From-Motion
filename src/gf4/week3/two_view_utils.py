@@ -152,7 +152,7 @@ def recover_relative_pose(
 
     """
     
-    _, R, t, mask = cv2.recoverPose(E, pts1, pts2, K, inlier_mask)
+    _, R, t, mask = cv2.recoverPose(E, pts1, pts2, K, inlier_mask) # Returns the number of inliers, rotation matrix R, translation vector t, and a mask of inliers
     return R, t, mask
 
     raise NotImplementedError("TODO: recover relative pose")
@@ -170,7 +170,7 @@ def make_projection_matrices(
 
     zero_t = np.zeros((3, 1))
     P1 = K @ np.hstack((np.eye(3), zero_t))
-    P2 = K @ np.hstack((R, t.reshape(3, 1)))
+    P2 = K @ np.hstack((R, t.reshape(3, 1))) # Reshape t to ensure it's a column vector
     return P1, P2
 
     raise NotImplementedError("TODO: create projection matrices")
@@ -212,7 +212,7 @@ def project_points(
     """
 
     P = K @ np.hstack((R, t.reshape(3, 1)))
-    points3d_hom = np.hstack((points3d, np.ones((points3d.shape[0], 1), dtype=np.float64)))
+    points3d_hom = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
     projected_hom = (P @ points3d_hom.T).T
     projected_pts = projected_hom[:, :2] / projected_hom[:, 2:]
     return projected_pts
