@@ -168,7 +168,7 @@ def make_projection_matrices(
     TODO: Complete this function.
     """
 
-    zero_t = np.zeros((3, 1), dtype=np.float64)
+    zero_t = np.zeros((3, 1))
     P1 = K @ np.hstack((np.eye(3), zero_t))
     P2 = K @ np.hstack((R, t.reshape(3, 1)))
     return P1, P2
@@ -190,9 +190,9 @@ def triangulate_points(
     """
 
     P1, P2 = make_projection_matrices(K, R, t)
-    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T) # Returns homogeneous coordinates (4xN)
 
-    # Convert to 3D points
+    # Convert to 3D points by dividing by the homogeneous coordinate
     points3d = points4d_hom[:3] / points4d_hom[3]
 
     return points3d
@@ -210,6 +210,13 @@ def project_points(
 
     TODO: Complete this function.
     """
+
+    P = K @ np.hstack((R, t.reshape(3, 1)))
+    points3d_hom = np.hstack((points3d, np.ones((points3d.shape[0], 1), dtype=np.float64)))
+    projected_hom = (P @ points3d_hom.T).T
+    projected_pts = projected_hom[:, :2] / projected_hom[:, 2:]
+    return projected_pts
+
     raise NotImplementedError("TODO: project 3D points")
 
 
@@ -225,6 +232,11 @@ def compute_reprojection_errors(
     TODO: Complete this function by projecting points3d and comparing with
     observed_pts.
     """
+
+    projected_pts = project_points(points3d, K, R, t)
+    errors = np.linalg.norm(projected_pts - observed_pts, axis=1)
+    return errors
+
     raise NotImplementedError("TODO: compute reprojection errors")
 
 
@@ -239,6 +251,14 @@ def compute_depths(
 
     Camera 1 has extrinsics [I|0]. Camera 2 has extrinsics [R|t].
     """
+
+    point_projection = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
+    P1 = np.hstack((np.eye(3), np.zeros((3, 1), dtype=np.float64)))
+    P2 = np.hstack((R, t.reshape(3, 1)))
+    depths1 = (P1 @ point_projection.T)[2]
+    depths2 = (P2 @ point_projection.T)[2]
+    return depths1, depths2
+
     raise NotImplementedError("TODO: compute point depths")
 
 
