@@ -240,9 +240,25 @@ Candidate pair & Inliers & Inlier ratio & Med.\ epi.\ (px) \\
 \end{table}
 \vspace{-0.4em}
 
-All three image pairs are temporally consecutive and exhibit strong geometric consistency, with more than 800 inliers, inlier ratios exceeding 0.85, and sub-pixel median epipolar errors below 0.31 px. These metrics indicate substantial overlap between the images and a well-conditioned estimation of the epipolar geometry.
-\textbf{Preferred initial pair: \texttt{151332564}--\texttt{151333412}} (highest
-inlier ratio, lowest median epipolar error of 0.208\,px), giving the most
+All three image pairs are temporally consecutive and exhibit strong geometric consistency, with more than 800 inliers, inlier ratios exceeding 0.85, and sub-pixel median epipolar errors below 0.31 px. These metrics indicate substantial overlap between the images.
+However, upon closer examination of the image pairs, they seem to be captured from very similar viewpoints, which may limit the parallax and thus the robustness of 3D reconstruction. We therefore choose the subsequent image pairs which also produce high inlier ratios and low epipolar errors, but with slightly more viewpoint variation to provide better geometric constraints for reconstruction:
+\begin{table}[H]
+\centering\small
+\vspace{-0.3em}
+\begin{tabular}{lrrr}
+\toprule
+Candidate pair & Inliers & Inlier ratio & Med.\ epi.\ (px) \\
+\midrule
+\texttt{...151333953} -- \texttt{...151335385} & 370 & 0.749 & 0.432 \\
+\texttt{...151342144} -- \texttt{...151343308} & 179 & 0.696 & 0.395 \\
+\texttt{...151340541} -- \texttt{...151341611} & 321 & 0.821 & 0.407 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\vspace{-0.4em}
+
+\textbf{Preferred initial pair: \texttt{151340541}--\texttt{151341611}} (highest
+inlier ratio, lowest median epipolar error of 0.407px), giving the most
 reliable seed for incremental reconstruction.
 
 %----------------------------------------------------------------------
@@ -254,7 +270,7 @@ reliable seed for incremental reconstruction.
   \item \textbf{Roksy (ri302):} Implemented phase E of refactoring feature-pair analysis and performing dataset-wide pairwise analysis.
 \end{itemize}
 
-\section*{8. Experiment Log (Page 4)}
+\section*{8. Experiment LogW}
 \small
 \subsection*{Implementation steps and group contributions}
 
@@ -280,21 +296,9 @@ degenerate subset. The all-matches median is the true diagnostic.
 
 \subsection*{Experiment choices}
 
-\textbf{Good pair} (\texttt{test\_pair}): same toy, same session, moderate
+\textbf{Good pair}: same toy, moderate
 baseline; chosen because epipolar lines converge and inlier error is sub-pixel.
 
-\textbf{Bad pair} (\texttt{bad\_pair}): same toy photographed in entirely
-different rooms; chosen to show the ratio-test failure when backgrounds differ.
-
-\textbf{Sensitivity:} pair mode only, one variable at a time on
-\texttt{test\_pair}.
-Surprising finding: the drop from 56\,\% to 10\,\% inlier ratio at
-ratio\,=\,0.90 was larger than anticipated --- a modest ratio relaxation
-can be catastrophic for RANSAC when it tips the outlier majority.
-
-\subsection*{AI and external assistance}
-[Declare what AI tools you used for \emph{learning concepts} or reading
-documentation (e.g.\ the 8-point algorithm, OpenCV API).
-Do \textbf{not} include tools used to write, edit, test, or debug code.]
+\textbf{Bad pair}: same toy photographed from widely different viewpoints, chosen to show the ratio-test failure when backgrounds differ.
 
 \end{document}

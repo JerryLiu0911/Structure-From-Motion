@@ -677,7 +677,7 @@ def draw_match_graph(
     plt.close()
 
 
-def select_top_initial_pairs(rows: list[dict], top_k: int = 3) -> list[dict]:
+def select_top_initial_pairs(rows: list[dict], top_k: int = 10) -> list[dict]:
     """Select candidate Week 3 initial pairs from pairwise metrics.
 
     This starter version ranks by RANSAC inlier count first, then53 inlier ratio.
