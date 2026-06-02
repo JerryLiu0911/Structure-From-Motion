@@ -279,6 +279,12 @@ def filter_reconstructed_points(
     - have positive depth in both cameras,
     - have reprojection error at most max_reprojection_error in both images.
     """
+    finite_mask = np.isfinite(points3d).all(axis=1)
+    depths1, depths2 = compute_depths(points3d, R, t)
+    positive_depth_mask = (depths1 > 0) & (depths2 > 0)
+    reprojection_error_mask = (errors1 <= max_reprojection_error) & (errors2 <= max_reprojection_error)
+    return finite_mask & positive_depth_mask & reprojection_error_mask
+
     raise NotImplementedError("TODO: filter reconstructed points")
 
 
