@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 from gf4.week3.two_view_utils import (
+    build_2d3d_correspondences,
     compute_depths,
     compute_reprojection_errors,
     draw_reprojection_overlay,
@@ -139,3 +140,35 @@ def test_draw_reprojection_overlay_writes_image(tmp_path: Path):
     saved = cv2.imread(str(output_path))
     assert saved is not None
     assert saved.size > 0
+
+
+def test_build_2d3d_correspondences_keeps_reconstructed_anchor_matches():
+    anchor_indices = np.array([3, 7, 11])
+    points3d = np.array(
+        [
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+        ]
+    )
+    new_keypoints = [
+        cv2.KeyPoint(10.0, 20.0, 1.0),
+        cv2.KeyPoint(30.0, 40.0, 1.0),
+        cv2.KeyPoint(50.0, 60.0, 1.0),
+    ]
+    matches = [
+        cv2.DMatch(_queryIdx=7, _trainIdx=1, _distance=0.1),
+        cv2.DMatch(_queryIdx=5, _trainIdx=0, _distance=0.2),
+        cv2.DMatch(_queryIdx=11, _trainIdx=2, _distance=0.3),
+        cv2.DMatch(_queryIdx=3, _trainIdx=2, _distance=0.4),
+    ]
+
+    out_points, out_pts = build_2d3d_correspondences(
+        anchor_indices,
+        points3d,
+        matches,
+        new_keypoints,
+    )
+
+    assert np.allclose(out_points, [[4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    assert np.allclose(out_pts, [[30.0, 40.0], [50.0, 60.0]])

@@ -355,27 +355,37 @@ def build_2d3d_correspondences(
     anchor_to_new_matches: list[cv2.DMatch],
     new_keypoints: list[cv2.KeyPoint],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build 2D-3D correspondences for registering a third image.
+    """Build 2D-3D correspondences for registering a third image."""
+    anchor_indices = np.asarray(reconstructed_anchor_indices, dtype=int).reshape(-1)
+    points = np.asarray(reconstructed_points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("Reconstructed points must have shape (N, 3)")
+    if len(anchor_indices) != len(points):
+        raise ValueError("Anchor index and 3D point counts differ")
 
-    The two-view reconstruction gives one 3D point for each kept feature in an
-    anchor image. This function matches that anchor image to a new image and
-    keeps only those matches whose anchor feature already has a reconstructed
-    3D point.
+    point_by_anchor = {
+        int(anchor_idx): point
+        for anchor_idx, point in zip(anchor_indices, points)
+    }
+    points3d = []
+    pts_new = []
+    used_new_indices = set()
+    for match in anchor_to_new_matches:
+        if match.trainIdx in used_new_indices:
+            continue
+        point = point_by_anchor.get(match.queryIdx)
+        if point is None:
+            continue
+        if match.trainIdx < 0 or match.trainIdx >= len(new_keypoints):
+            continue
 
-    TODO: Complete this function.
+        points3d.append(point)
+        pts_new.append(new_keypoints[match.trainIdx].pt)
+        used_new_indices.add(match.trainIdx)
 
-    Inputs:
-    - reconstructed_anchor_indices[i] is the anchor-image keypoint index for
-      reconstructed_points[i].
-    - anchor_to_new_matches are OpenCV matches from the anchor image to the new
-      image, so match.queryIdx is an anchor-image keypoint index and
-      match.trainIdx is a new-image keypoint index.
-
-    Return:
-    - points3d: Nx3 reconstructed 3D points
-    - pts_new: Nx2 feature coordinates in the new image
-    """
-    raise NotImplementedError("TODO: build 2D-3D correspondences")
+    if not points3d:
+        return np.empty((0, 3), dtype=np.float64), np.empty((0, 2), dtype=np.float64)
+    return np.asarray(points3d, dtype=np.float64), np.asarray(pts_new, dtype=np.float64)
 
 
 def estimate_camera_pose_pnp(
