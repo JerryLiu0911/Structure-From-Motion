@@ -10,10 +10,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import csv
+import os
+import tempfile
 from typing import Iterable
 
+os.environ.setdefault(
+    "MPLCONFIGDIR",
+    str(Path(tempfile.gettempdir()) / "matplotlib"),
+)
+
 import cv2
+import matplotlib
 import numpy as np
+
+matplotlib.use("Agg")
 
 
 @dataclass
@@ -212,17 +222,16 @@ def make_projection_matrices(
     R: np.ndarray,
     t: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Create projection matrices P1 = K[I|0] and P2 = K[R|t].
+    """Create projection matrices P1 = K[I|0] and P2 = K[R|t]."""
+    K = np.asarray(K, dtype=np.float64)
+    R = np.asarray(R, dtype=np.float64)
+    t = np.asarray(t, dtype=np.float64).reshape(3, 1)
+    if K.shape != (3, 3) or R.shape != (3, 3):
+        raise ValueError("K and R must both be 3x3 matrices")
 
-    TODO: Complete this function.
-    """
-
-    zero_t = np.zeros((3, 1))
-    P1 = K @ np.hstack((np.eye(3), zero_t))
-    P2 = K @ np.hstack((R, t.reshape(3, 1))) # Reshape t to ensure it's a column vector
+    P1 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
+    P2 = K @ np.hstack((R, t))
     return P1, P2
-
-    raise NotImplementedError("TODO: create projection matrices")
 
 
 def triangulate_points(
@@ -232,21 +241,20 @@ def triangulate_points(
     R: np.ndarray,
     t: np.ndarray,
 ) -> np.ndarray:
-    """Triangulate 3D points from corresponding image points.
-
-    TODO: Complete this function.
-
-    """
+    """Triangulate 3D points from corresponding image points."""
+    pts1 = np.asarray(pts1, dtype=np.float64)
+    pts2 = np.asarray(pts2, dtype=np.float64)
+    if pts1.shape != pts2.shape or pts1.ndim != 2 or pts1.shape[1] != 2:
+        raise ValueError("Point arrays must both have shape (N, 2)")
+    if len(pts1) == 0:
+        return np.empty((0, 3), dtype=np.float64)
 
     P1, P2 = make_projection_matrices(K, R, t)
-    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T) # Returns homogeneous coordinates (4xN)
+    points4d = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
 
-    # Convert to 3D points by dividing by the homogeneous coordinate
-    points3d = points4d_hom[:3] / points4d_hom[3]
-
-    return points3d
-
-    raise NotImplementedError("TODO: triangulate 3D points")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        points3d = (points4d[:3] / points4d[3:4]).T
+    return points3d.astype(np.float64)
 
 
 def project_points(
@@ -255,18 +263,20 @@ def project_points(
     R: np.ndarray,
     t: np.ndarray,
 ) -> np.ndarray:
-    """Project 3D points into an image using camera matrix K[R|t].
+    """Project 3D points into an image using camera matrix K[R|t]."""
+    points3d = np.asarray(points3d, dtype=np.float64)
+    if points3d.ndim != 2 or points3d.shape[1] != 3:
+        raise ValueError("3D points must have shape (N, 3)")
+    if len(points3d) == 0:
+        return np.empty((0, 2), dtype=np.float64)
 
-    TODO: Complete this function.
-    """
-
-    P = K @ np.hstack((R, t.reshape(3, 1)))
-    points3d_hom = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
-    projected_hom = (P @ points3d_hom.T).T
-    projected_pts = projected_hom[:, :2] / projected_hom[:, 2:]
-    return projected_pts
-
-    raise NotImplementedError("TODO: project 3D points")
+    K = np.asarray(K, dtype=np.float64)
+    R = np.asarray(R, dtype=np.float64)
+    t = np.asarray(t, dtype=np.float64).reshape(3, 1)
+    camera_points = (R @ points3d.T + t).T
+    image_points = (K @ camera_points.T).T
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return image_points[:, :2] / image_points[:, 2:3]
 
 
 def compute_reprojection_errors(
@@ -276,17 +286,15 @@ def compute_reprojection_errors(
     R: np.ndarray,
     t: np.ndarray,
 ) -> np.ndarray:
-    """Compute Euclidean reprojection error in pixels.
-
-    TODO: Complete this function by projecting points3d and comparing with
-    observed_pts.
-    """
+    """Compute Euclidean reprojection error in pixels."""
+    observed_pts = np.asarray(observed_pts, dtype=np.float64)
+    if observed_pts.ndim != 2 or observed_pts.shape[1] != 2:
+        raise ValueError("Observed points must have shape (N, 2)")
 
     projected_pts = project_points(points3d, K, R, t)
-    errors = np.linalg.norm(projected_pts - observed_pts, axis=1)
-    return errors
-
-    raise NotImplementedError("TODO: compute reprojection errors")
+    if len(projected_pts) != len(observed_pts):
+        raise ValueError("Projected and observed point counts differ")
+    return np.linalg.norm(projected_pts - observed_pts, axis=1)
 
 
 def compute_depths(
@@ -296,19 +304,20 @@ def compute_depths(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute point depths in camera 1 and camera 2 coordinates.
 
-    TODO: Complete this function.
-
     Camera 1 has extrinsics [I|0]. Camera 2 has extrinsics [R|t].
     """
+    points3d = np.asarray(points3d, dtype=np.float64)
+    if points3d.ndim != 2 or points3d.shape[1] != 3:
+        raise ValueError("3D points must have shape (N, 3)")
+    if len(points3d) == 0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty
 
-    point_projection = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
-    P1 = np.hstack((np.eye(3), np.zeros((3, 1), dtype=np.float64)))
-    P2 = np.hstack((R, t.reshape(3, 1)))
-    depths1 = (P1 @ point_projection.T)[2]
-    depths2 = (P2 @ point_projection.T)[2]
+    R = np.asarray(R, dtype=np.float64)
+    t = np.asarray(t, dtype=np.float64).reshape(3, 1)
+    depths1 = points3d[:, 2]
+    depths2 = (R @ points3d.T + t)[2]
     return depths1, depths2
-
-    raise NotImplementedError("TODO: compute point depths")
 
 
 def filter_reconstructed_points(
@@ -319,22 +328,25 @@ def filter_reconstructed_points(
     t: np.ndarray,
     max_reprojection_error: float = 4.0,
 ) -> np.ndarray:
-    """Return a boolean mask for valid triangulated points.
+    """Return a boolean mask for valid triangulated points."""
+    points3d = np.asarray(points3d, dtype=np.float64)
+    errors1 = np.asarray(errors1, dtype=np.float64).reshape(-1)
+    errors2 = np.asarray(errors2, dtype=np.float64).reshape(-1)
+    if points3d.ndim != 2 or points3d.shape[1] != 3:
+        raise ValueError("3D points must have shape (N, 3)")
+    if len(errors1) != len(points3d) or len(errors2) != len(points3d):
+        raise ValueError("Error arrays must match the number of 3D points")
 
-    TODO: Complete this function.
-
-    Keep points that:
-    - have finite 3D coordinates,
-    - have positive depth in both cameras,
-    - have reprojection error at most max_reprojection_error in both images.
-    """
     finite_mask = np.isfinite(points3d).all(axis=1)
     depths1, depths2 = compute_depths(points3d, R, t)
     positive_depth_mask = (depths1 > 0) & (depths2 > 0)
-    reprojection_error_mask = (errors1 <= max_reprojection_error) & (errors2 <= max_reprojection_error)
+    reprojection_error_mask = (
+        np.isfinite(errors1)
+        & np.isfinite(errors2)
+        & (errors1 <= max_reprojection_error)
+        & (errors2 <= max_reprojection_error)
+    )
     return finite_mask & positive_depth_mask & reprojection_error_mask
-
-    raise NotImplementedError("TODO: filter reconstructed points")
 
 
 def build_2d3d_correspondences(
@@ -397,6 +409,48 @@ def sample_point_colours(image: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return bgr[:, ::-1].astype(np.uint8)
 
 
+def _draw_reprojection_axis(
+    ax,
+    image: np.ndarray,
+    observed: np.ndarray,
+    projected: np.ndarray,
+    title: str,
+) -> None:
+    ax.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    ax.set_title(title)
+    ax.axis("off")
+    if len(observed) == 0:
+        return
+
+    ax.scatter(
+        observed[:, 0],
+        observed[:, 1],
+        s=24,
+        facecolors="none",
+        edgecolors="#2b8cbe",
+        linewidths=1.2,
+        label="Observed",
+    )
+    ax.scatter(
+        projected[:, 0],
+        projected[:, 1],
+        s=28,
+        marker="x",
+        c="#d95f02",
+        linewidths=1.3,
+        label="Reprojected",
+    )
+    for obs, proj in zip(observed, projected):
+        ax.plot(
+            [obs[0], proj[0]],
+            [obs[1], proj[1]],
+            c="#525252",
+            linewidth=0.8,
+            alpha=0.75,
+        )
+    ax.legend(loc="lower right", fontsize=8, framealpha=0.85)
+
+
 def draw_reprojection_overlay(
     image1: np.ndarray,
     image2: np.ndarray,
@@ -409,23 +463,46 @@ def draw_reprojection_overlay(
     output_path: Path,
     max_draw: int = 120,
 ) -> None:
-    """Save a visual check comparing observed and reprojected image points.
+    """Save a two-view overlay of observed points and reprojected 3D points."""
+    pts1 = np.asarray(pts1, dtype=np.float64)
+    pts2 = np.asarray(pts2, dtype=np.float64)
+    points3d = np.asarray(points3d, dtype=np.float64)
+    if pts1.shape != pts2.shape or pts1.ndim != 2 or pts1.shape[1] != 2:
+        raise ValueError("Observed point arrays must both have shape (N, 2)")
+    if points3d.ndim != 2 or points3d.shape[1] != 3:
+        raise ValueError("3D points must have shape (N, 3)")
+    if len(points3d) != len(pts1):
+        raise ValueError("3D point and observed point counts differ")
 
-    TODO: Complete this function.
+    projected1 = project_points(points3d, K, np.eye(3), np.zeros((3, 1)))
+    projected2 = project_points(points3d, K, R, t)
 
-    Required behaviour:
-    - project points3d into image 1 using camera pose [I|0],
-    - project points3d into image 2 using camera pose [R|t],
-    - show the two input images side-by-side,
-    - draw observed points as one marker style,
-    - draw reprojected points as a different marker style,
-    - draw a short line from each observed point to its reprojection,
-    - save the figure to output_path.
+    count = min(max_draw, len(points3d))
+    if count:
+        indices = np.linspace(0, len(points3d) - 1, count, dtype=int)
+        pts1 = pts1[indices]
+        pts2 = pts2[indices]
+        projected1 = projected1[indices]
+        projected2 = projected2[indices]
+    else:
+        pts1 = pts1[:0]
+        pts2 = pts2[:0]
+        projected1 = projected1[:0]
+        projected2 = projected2[:0]
 
-    This is one of the main ways to check whether your reconstruction is
-    geometrically meaningful.
-    """
-    raise NotImplementedError("TODO: draw two-view reprojection overlay")
+    import matplotlib.pyplot as plt
+
+    ensure_dir(output_path.parent)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 6))
+    _draw_reprojection_axis(
+        axes[0], image1, pts1, projected1, "Image 1 reprojection"
+    )
+    _draw_reprojection_axis(
+        axes[1], image2, pts2, projected2, "Image 2 reprojection"
+    )
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
 
 
 def draw_single_image_reprojection_overlay(
