@@ -115,6 +115,25 @@ def make_camera_matrix(
     )
 
 
+def _mask_to_bool(mask: np.ndarray | None, length: int) -> np.ndarray:
+    if mask is None:
+        return np.ones(length, dtype=bool)
+
+    mask = np.asarray(mask).reshape(-1)
+    if mask.size != length:
+        raise ValueError(f"Expected mask of length {length}, got {mask.size}")
+    return mask.astype(bool)
+
+
+def _essential_candidates(E: np.ndarray) -> list[np.ndarray]:
+    E = np.asarray(E, dtype=np.float64)
+    if E.shape == (3, 3):
+        return [E]
+    if E.ndim == 2 and E.shape[1] == 3 and E.shape[0] % 3 == 0:
+        return [E[i : i + 3] for i in range(0, E.shape[0], 3)]
+    raise ValueError(f"Essential matrix has unsupported shape {E.shape}")
+
+
 def estimate_essential_matrix(
     pts1: np.ndarray,
     pts2: np.ndarray,
@@ -123,10 +142,14 @@ def estimate_essential_matrix(
     confidence: float = 0.999,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Estimate the essential matrix with OpenCV RANSAC.
-
-    TODO: Complete this function.
-
     """
+    pts1 = np.asarray(pts1, dtype=np.float64)
+    pts2 = np.asarray(pts2, dtype=np.float64)
+    if pts1.shape != pts2.shape or pts1.ndim != 2 or pts1.shape[1] != 2:
+        raise ValueError("Point arrays must both have shape (N, 2)")
+    if len(pts1) < 5:
+        raise ValueError(f"Need at least 5 correspondences, got {len(pts1)}")
+
     E, mask = cv2.findEssentialMat(
         pts1,
         pts2,
@@ -135,8 +158,9 @@ def estimate_essential_matrix(
         prob=confidence,
         threshold=threshold,
     )
-    return E, mask
-    raise NotImplementedError("TODO: estimate essential matrix")
+    if E is None or mask is None:
+        raise ValueError("Essential matrix estimation failed")
+    return np.asarray(E, dtype=np.float64), _mask_to_bool(mask, len(pts1))
 
 
 def recover_relative_pose(
@@ -147,15 +171,40 @@ def recover_relative_pose(
     inlier_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Recover relative camera pose from an essential matrix.
-
-    TODO: Complete this function.
-
     """
-    
-    _, R, t, mask = cv2.recoverPose(E, pts1, pts2, K, inlier_mask) # Returns the number of inliers, rotation matrix R, translation vector t, and a mask of inliers
-    return R, t, mask
+    pts1 = np.asarray(pts1, dtype=np.float64)
+    pts2 = np.asarray(pts2, dtype=np.float64)
+    if pts1.shape != pts2.shape or pts1.ndim != 2 or pts1.shape[1] != 2:
+        raise ValueError("Point arrays must both have shape (N, 2)")
+    if len(pts1) < 5:
+        raise ValueError(f"Need at least 5 correspondences, got {len(pts1)}")
 
-    raise NotImplementedError("TODO: recover relative pose")
+    input_mask = None
+    if inlier_mask is not None:
+        input_mask = (
+            _mask_to_bool(inlier_mask, len(pts1)).astype(np.uint8) * 255
+        ).reshape(-1, 1)
+
+    best_result = None
+    for candidate in _essential_candidates(E):
+        mask_arg = None if input_mask is None else input_mask.copy()
+        _, R, t, mask = cv2.recoverPose(
+            candidate,
+            pts1,
+            pts2,
+            cameraMatrix=K,
+            mask=mask_arg,
+        )
+        pose_mask = _mask_to_bool(mask, len(pts1))
+        score = int(np.sum(pose_mask))
+        if best_result is None or score > best_result[0]:
+            best_result = (score, R, t, pose_mask)
+
+    if best_result is None:
+        raise ValueError("Relative pose recovery failed")
+
+    _, R, t, pose_mask = best_result
+    return R.astype(np.float64), t.astype(np.float64), pose_mask
 
 
 def make_projection_matrices(
