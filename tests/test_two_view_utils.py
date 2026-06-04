@@ -8,6 +8,7 @@ from gf4.week3.two_view_utils import (
     compute_depths,
     compute_reprojection_errors,
     draw_reprojection_overlay,
+    draw_single_image_reprojection_overlay,
     estimate_essential_matrix,
     estimate_camera_pose_pnp,
     filter_reconstructed_points,
@@ -137,6 +138,36 @@ def test_draw_reprojection_overlay_writes_image(tmp_path: Path):
     output_path = tmp_path / "overlay.png"
 
     draw_reprojection_overlay(image1, image2, pts1, pts2, points3d, K, R, t, output_path)
+
+    saved = cv2.imread(str(output_path))
+    assert saved is not None
+    assert saved.size > 0
+
+
+def test_draw_single_image_reprojection_overlay_writes_image(tmp_path: Path):
+    K, R, t, _, _ = _synthetic_pair()
+    points3d = np.array(
+        [
+            [-0.5, -0.3, 4.5],
+            [0.2, -0.1, 4.7],
+            [0.6, 0.4, 5.0],
+            [-0.1, 0.5, 4.9],
+        ],
+        dtype=np.float64,
+    )
+    observed = project_points(points3d, K, R, t)
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    output_path = tmp_path / "single_overlay.png"
+
+    draw_single_image_reprojection_overlay(
+        image,
+        observed,
+        points3d,
+        K,
+        R,
+        t,
+        output_path,
+    )
 
     saved = cv2.imread(str(output_path))
     assert saved is not None

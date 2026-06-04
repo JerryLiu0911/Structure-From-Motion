@@ -545,20 +545,34 @@ def draw_single_image_reprojection_overlay(
     output_path: Path,
     max_draw: int = 120,
 ) -> None:
-    """Save a reprojection check for one registered camera.
+    """Save a one-image overlay of observed points and reprojected 3D points."""
+    observed_pts = np.asarray(observed_pts, dtype=np.float64)
+    points3d = np.asarray(points3d, dtype=np.float64)
+    if observed_pts.ndim != 2 or observed_pts.shape[1] != 2:
+        raise ValueError("Observed points must have shape (N, 2)")
+    if points3d.ndim != 2 or points3d.shape[1] != 3:
+        raise ValueError("3D points must have shape (N, 3)")
+    if len(points3d) != len(observed_pts):
+        raise ValueError("3D point and observed point counts differ")
 
-    TODO: Complete this function.
+    projected = project_points(points3d, K, R, t)
+    count = min(max_draw, len(points3d))
+    if count:
+        indices = np.linspace(0, len(points3d) - 1, count, dtype=int)
+        observed_pts = observed_pts[indices]
+        projected = projected[indices]
+    else:
+        observed_pts = observed_pts[:0]
+        projected = projected[:0]
 
-    Required behaviour:
-    - project points3d into the image using camera pose [R|t],
-    - draw observed_pts and projected points on top of the image,
-    - draw a short line from each observed point to its reprojection,
-    - save the figure to output_path.
+    import matplotlib.pyplot as plt
 
-    This is the corresponding correctness check for the image registered by
-    PnP.
-    """
-    raise NotImplementedError("TODO: draw single-image reprojection overlay")
+    ensure_dir(output_path.parent)
+    fig, ax = plt.subplots(1, 1, figsize=(8, 7))
+    _draw_reprojection_axis(ax, image, observed_pts, projected, "Reprojection")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
 
 
 def _camera_center(R: np.ndarray, t: np.ndarray) -> np.ndarray:
