@@ -505,6 +505,8 @@ def analyse_feature_pair(
                     inlier_error_mean = float(np.mean(inlier_errors))
                     inlier_error_median = float(np.median(inlier_errors))
                     inlier_error_max = float(np.max(inlier_errors))
+        else:
+            raise ValueError("Phase 5 (Estimation of F with RANSAC) failed. F is None.")
     except Exception as e:
         raise RuntimeError("Phase 5 (Compute epipolar errors) failed.") from e
 
