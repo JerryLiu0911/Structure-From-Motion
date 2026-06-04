@@ -508,7 +508,7 @@ def analyse_feature_pair(
         else:
             raise ValueError("Phase 5 (Estimation of F with RANSAC) failed. F is None.")
     except Exception as e:
-        raise RuntimeError("Phase 5 (Compute epipolar errors) failed.") from e
+        raise RuntimeError("Phase 5 (Compute epipolar errors) failed. ") from e
 
     # 6. Save figures
     try:
