@@ -9,6 +9,7 @@ from gf4.week3.two_view_utils import (
     compute_reprojection_errors,
     draw_reprojection_overlay,
     estimate_essential_matrix,
+    estimate_camera_pose_pnp,
     filter_reconstructed_points,
     make_projection_matrices,
     project_points,
@@ -172,3 +173,24 @@ def test_build_2d3d_correspondences_keeps_reconstructed_anchor_matches():
 
     assert np.allclose(out_points, [[4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
     assert np.allclose(out_pts, [[30.0, 40.0], [50.0, 60.0]])
+
+
+def test_estimate_camera_pose_pnp_recovers_pose_and_inliers():
+    K, expected_R, expected_t, _, _ = _synthetic_pair()
+    points = []
+    for x in np.linspace(-1.0, 1.0, 5):
+        for y in np.linspace(-0.6, 0.6, 4):
+            points.append([x, y, 4.5 + 0.3 * x + 0.2 * y])
+    points3d = np.asarray(points, dtype=np.float64)
+    pts2d = project_points(points3d, K, expected_R, expected_t)
+    pts2d[-1] = [15.0, 15.0]
+
+    R, t, mask = estimate_camera_pose_pnp(points3d, pts2d, K, threshold=2.0)
+    errors = compute_reprojection_errors(points3d[mask], pts2d[mask], K, R, t)
+
+    assert mask.dtype == bool
+    assert mask.shape == (len(points3d),)
+    assert np.sum(mask) >= len(points3d) - 1
+    assert np.allclose(R, expected_R, atol=1e-5)
+    assert np.allclose(t, expected_t, atol=1e-5)
+    assert np.max(errors) < 1e-4

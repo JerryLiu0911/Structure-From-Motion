@@ -395,16 +395,36 @@ def estimate_camera_pose_pnp(
     threshold: float = 6.0,
     confidence: float = 0.999,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Estimate a new camera pose from 2D-3D correspondences using PnP.
+    """Estimate a new camera pose from 2D-3D correspondences using PnP."""
+    points3d = np.asarray(points3d, dtype=np.float64)
+    pts2d = np.asarray(pts2d, dtype=np.float64)
+    K = np.asarray(K, dtype=np.float64)
+    if points3d.ndim != 2 or points3d.shape[1] != 3:
+        raise ValueError("3D points must have shape (N, 3)")
+    if pts2d.ndim != 2 or pts2d.shape[1] != 2:
+        raise ValueError("2D points must have shape (N, 2)")
+    if len(points3d) != len(pts2d):
+        raise ValueError("2D and 3D point counts differ")
+    if len(points3d) < 6:
+        raise ValueError(f"Need at least 6 correspondences, got {len(points3d)}")
 
-    TODO: Complete this function with cv2.solvePnPRansac and cv2.Rodrigues.
+    ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+        points3d,
+        pts2d,
+        K,
+        None,
+        reprojectionError=threshold,
+        confidence=confidence,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
+    if not ok or rvec is None or tvec is None:
+        raise ValueError("PnP pose estimation failed")
 
-    Return:
-    - R: 3x3 world-to-camera rotation for the new image
-    - t: 3x1 world-to-camera translation for the new image
-    - inlier_mask: boolean array of shape (N,)
-    """
-    raise NotImplementedError("TODO: estimate camera pose with PnP")
+    R, _ = cv2.Rodrigues(rvec)
+    inlier_mask = np.zeros(len(points3d), dtype=bool)
+    if inliers is not None:
+        inlier_mask[np.asarray(inliers).reshape(-1)] = True
+    return R.astype(np.float64), tvec.reshape(3, 1).astype(np.float64), inlier_mask
 
 
 def sample_point_colours(image: np.ndarray, pts: np.ndarray) -> np.ndarray:
