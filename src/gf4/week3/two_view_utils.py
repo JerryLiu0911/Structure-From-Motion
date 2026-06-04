@@ -249,7 +249,8 @@ def make_projection_matrices(
     if K.shape != (3, 3) or R.shape != (3, 3):
         raise ValueError("K and R must both be 3x3 matrices")
 
-    P1 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
+    zero_t = np.zeros((3, 1))
+    P1 = K @ np.hstack((np.eye(3), zero_t))
     P2 = K @ np.hstack((R, t))
     return P1, P2
 
@@ -270,10 +271,10 @@ def triangulate_points(
         return np.empty((0, 3), dtype=np.float64)
 
     P1, P2 = make_projection_matrices(K, R, t)
-    points4d = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        points3d = (points4d[:3] / points4d[3:4]).T
+        points3d = (points4d_hom[:3] / points4d_hom[3]).T
     return points3d.astype(np.float64)
 
 
@@ -293,10 +294,15 @@ def project_points(
     K = np.asarray(K, dtype=np.float64)
     R = np.asarray(R, dtype=np.float64)
     t = np.asarray(t, dtype=np.float64).reshape(3, 1)
-    camera_points = (R @ points3d.T + t).T
-    image_points = (K @ camera_points.T).T
+    if K.shape != (3, 3) or R.shape != (3, 3):
+        raise ValueError("K and R must both be 3x3 matrices")
+
+    P = K @ np.hstack((R, t))
+    points3d_hom = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
+    projected_hom = (P @ points3d_hom.T).T
     with np.errstate(divide="ignore", invalid="ignore"):
-        return image_points[:, :2] / image_points[:, 2:3]
+        projected_pts = projected_hom[:, :2] / projected_hom[:, 2:]
+    return projected_pts
 
 
 def compute_reprojection_errors(
@@ -335,8 +341,14 @@ def compute_depths(
 
     R = np.asarray(R, dtype=np.float64)
     t = np.asarray(t, dtype=np.float64).reshape(3, 1)
-    depths1 = points3d[:, 2]
-    depths2 = (R @ points3d.T + t)[2]
+    if R.shape != (3, 3):
+        raise ValueError("R must be a 3x3 matrix")
+
+    point_projection = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
+    P1 = np.hstack((np.eye(3), np.zeros((3, 1), dtype=np.float64)))
+    P2 = np.hstack((R, t))
+    depths1 = (P1 @ point_projection.T)[2]
+    depths2 = (P2 @ point_projection.T)[2]
     return depths1, depths2
 
 
