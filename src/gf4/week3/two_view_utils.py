@@ -108,13 +108,25 @@ def make_camera_matrix(
     principal_point: tuple[float, float] | None = None,
 ) -> np.ndarray:
     """Build a simple camera intrinsic matrix for a resized image."""
+    if len(image_shape) < 2:
+        raise ValueError("Image shape must include height and width")
+
     height, width = image_shape[:2]
+    if height <= 0 or width <= 0:
+        raise ValueError("Image height and width must be positive")
+
     if focal_length_px is None:
         focal_length_px = 1.2 * max(width, height)
+    if focal_length_px <= 0:
+        raise ValueError("Focal length must be positive")
+
     if principal_point is None:
         principal_point = ((width - 1) / 2.0, (height - 1) / 2.0)
 
     cx, cy = principal_point
+    if not np.isfinite([focal_length_px, cx, cy]).all():
+        raise ValueError("Camera intrinsics must be finite")
+
     return np.array(
         [
             [focal_length_px, 0.0, cx],
@@ -151,8 +163,7 @@ def estimate_essential_matrix(
     threshold: float = 1.0,
     confidence: float = 0.999,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Estimate the essential matrix with OpenCV RANSAC.
-    """
+    """Estimate the essential matrix with OpenCV RANSAC."""
     pts1 = np.asarray(pts1, dtype=np.float64)
     pts2 = np.asarray(pts2, dtype=np.float64)
     if pts1.shape != pts2.shape or pts1.ndim != 2 or pts1.shape[1] != 2:
@@ -170,7 +181,10 @@ def estimate_essential_matrix(
     )
     if E is None or mask is None:
         raise ValueError("Essential matrix estimation failed")
-    return np.asarray(E, dtype=np.float64), _mask_to_bool(mask, len(pts1))
+
+    E = np.asarray(E, dtype=np.float64)
+    mask = _mask_to_bool(mask, len(pts1))
+    return E, mask
 
 
 def recover_relative_pose(
@@ -180,8 +194,7 @@ def recover_relative_pose(
     K: np.ndarray,
     inlier_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Recover relative camera pose from an essential matrix.
-    """
+    """Recover relative camera pose from an essential matrix."""
     pts1 = np.asarray(pts1, dtype=np.float64)
     pts2 = np.asarray(pts2, dtype=np.float64)
     if pts1.shape != pts2.shape or pts1.ndim != 2 or pts1.shape[1] != 2:
@@ -189,32 +202,39 @@ def recover_relative_pose(
     if len(pts1) < 5:
         raise ValueError(f"Need at least 5 correspondences, got {len(pts1)}")
 
-    input_mask = None
     if inlier_mask is not None:
-        input_mask = (
+        inlier_mask = (
             _mask_to_bool(inlier_mask, len(pts1)).astype(np.uint8) * 255
         ).reshape(-1, 1)
 
-    best_result = None
-    for candidate in _essential_candidates(E):
-        mask_arg = None if input_mask is None else input_mask.copy()
+    best_inliers = -1
+    best_R = None
+    best_t = None
+    best_mask = None
+    for E_candidate in _essential_candidates(E):
+        pose_mask = None if inlier_mask is None else inlier_mask.copy()
         _, R, t, mask = cv2.recoverPose(
-            candidate,
+            E_candidate,
             pts1,
             pts2,
             cameraMatrix=K,
-            mask=mask_arg,
+            mask=pose_mask,
         )
-        pose_mask = _mask_to_bool(mask, len(pts1))
-        score = int(np.sum(pose_mask))
-        if best_result is None or score > best_result[0]:
-            best_result = (score, R, t, pose_mask)
+        mask = _mask_to_bool(mask, len(pts1))
+        inliers = int(np.sum(mask))
+        if inliers > best_inliers:
+            best_inliers = inliers
+            best_R = R
+            best_t = t
+            best_mask = mask
 
-    if best_result is None:
+    if best_R is None or best_t is None or best_mask is None:
         raise ValueError("Relative pose recovery failed")
 
-    _, R, t, pose_mask = best_result
-    return R.astype(np.float64), t.astype(np.float64), pose_mask
+    R = best_R.astype(np.float64)
+    t = best_t.astype(np.float64)
+    mask = best_mask
+    return R, t, mask
 
 
 def make_projection_matrices(
@@ -229,7 +249,8 @@ def make_projection_matrices(
     if K.shape != (3, 3) or R.shape != (3, 3):
         raise ValueError("K and R must both be 3x3 matrices")
 
-    P1 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
+    zero_t = np.zeros((3, 1))
+    P1 = K @ np.hstack((np.eye(3), zero_t))
     P2 = K @ np.hstack((R, t))
     return P1, P2
 
@@ -250,10 +271,10 @@ def triangulate_points(
         return np.empty((0, 3), dtype=np.float64)
 
     P1, P2 = make_projection_matrices(K, R, t)
-    points4d = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        points3d = (points4d[:3] / points4d[3:4]).T
+        points3d = (points4d_hom[:3] / points4d_hom[3]).T
     return points3d.astype(np.float64)
 
 
@@ -273,10 +294,15 @@ def project_points(
     K = np.asarray(K, dtype=np.float64)
     R = np.asarray(R, dtype=np.float64)
     t = np.asarray(t, dtype=np.float64).reshape(3, 1)
-    camera_points = (R @ points3d.T + t).T
-    image_points = (K @ camera_points.T).T
+    if K.shape != (3, 3) or R.shape != (3, 3):
+        raise ValueError("K and R must both be 3x3 matrices")
+
+    P = K @ np.hstack((R, t))
+    points3d_hom = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
+    projected_hom = (P @ points3d_hom.T).T
     with np.errstate(divide="ignore", invalid="ignore"):
-        return image_points[:, :2] / image_points[:, 2:3]
+        projected_pts = projected_hom[:, :2] / projected_hom[:, 2:]
+    return projected_pts
 
 
 def compute_reprojection_errors(
@@ -315,8 +341,14 @@ def compute_depths(
 
     R = np.asarray(R, dtype=np.float64)
     t = np.asarray(t, dtype=np.float64).reshape(3, 1)
-    depths1 = points3d[:, 2]
-    depths2 = (R @ points3d.T + t)[2]
+    if R.shape != (3, 3):
+        raise ValueError("R must be a 3x3 matrix")
+
+    point_projection = np.hstack((points3d, np.ones((points3d.shape[0], 1))))
+    P1 = np.hstack((np.eye(3), np.zeros((3, 1), dtype=np.float64)))
+    P2 = np.hstack((R, t))
+    depths1 = (P1 @ point_projection.T)[2]
+    depths2 = (P2 @ point_projection.T)[2]
     return depths1, depths2
 
 
