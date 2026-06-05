@@ -1,0 +1,2 @@
+image_k,anchor_matches,pnp_correspondences,pnp_inliers,median_reprojection_error_px,mean_reprojection_error_px,focal_length_px
+PXL_20260519_151337624.jpg,52,10,7,1.3349908645924051,1.7649576670913218,1920.0

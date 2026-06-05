@@ -1,0 +1,2 @@
+image_i,image_j,filtered_matches,essential_inliers,pose_inliers,triangulated_points,positive_depth_points,kept_points,median_reprojection_error_px,mean_reprojection_error_px,focal_length_px
+PXL_20260519_151340541.jpg,PXL_20260519_151341611.jpg,391,344,344,344,344,344,0.1844971066927047,0.2164941030677616,1920.0
