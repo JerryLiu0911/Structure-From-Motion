@@ -239,6 +239,16 @@ def estimate_fundamental_ransac(
     - inlier_mask: boolean array of shape (N,)
     """
     F_matrix, inlier_mask = cv2.findFundamentalMat(pts1, pts2, cv2.RANSAC, threshold, confidence) # returns fundamental matrix and inlier mask of boolean values indicating which point pairs are inliers according to the RANSAC algorithm, based on the specified distance threshold and confidence level.
+
+    # findFundamentalMat does not always return a single 3x3 matrix. On
+    # degenerate samples (planar scenes / near-pure rotation) it falls back to
+    # the 7-point algorithm and returns up to three stacked candidates with
+    # shape (9, 3) or (6, 3); on total failure it returns None / an empty array.
+    # Normalise to a single 3x3 (first candidate) so callers can rely on the shape.
+    if F_matrix is None or F_matrix.size == 0:
+        return None, inlier_mask
+    if F_matrix.shape[0] > 3:
+        F_matrix = F_matrix[:3]
     return F_matrix, inlier_mask
 
 
@@ -506,7 +516,11 @@ def analyse_feature_pair(
                     inlier_error_median = float(np.median(inlier_errors))
                     inlier_error_max = float(np.max(inlier_errors))
         else:
-            raise ValueError("Phase 5 (Estimation of F with RANSAC) failed. F is None.")
+            # Degenerate pair: no fundamental matrix could be estimated. Leave
+            # the epipolar-error fields as None and keep going so one bad pair
+            # does not abort an all-pairs dataset run.
+            print(f"  (skipping epipolar errors: no F for "
+                  f"{features1.path.name} <-> {features2.path.name})")
     except Exception as e:
         raise RuntimeError("Phase 5 (Compute epipolar errors) failed. ") from e
 
