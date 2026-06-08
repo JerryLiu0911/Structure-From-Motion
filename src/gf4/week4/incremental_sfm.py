@@ -1,7 +1,534 @@
+"""GF4 Week 4 incremental Structure-from-Motion tools.
+
+Pure reconstruction helpers and a stateful incremental engine. This module does
+no module loading or file I/O -- the Week 4 driver (`week4_pipeline.py`) loads
+the Week 2 / Week 3 utilities and injects the Week 3 geometry module into the
+engine.
+
+Week 3 registers exactly one extra image (image 3) against a fixed initial pair.
+Week 4 generalises that single add-step into a loop over a pool of images:
+
+  * a persistent *point map* links every 3D point to the (image, keypoint)
+    observations that produced it, so a new image can be matched against *all*
+    registered images, not just two fixed anchors;
+  * `triangulate_general` triangulates between two arbitrary registered cameras
+    (Week 3's `triangulate_points` assumes the first camera is at the origin);
+  * images are added greedily -- each step registers the unregistered image with
+    the most 2D-3D correspondences to the current cloud.
+
+Initial-pair selection uses the *median triangulation angle* (parallax) so the
+reconstruction starts from a wide-baseline, well-conditioned pair.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
 import cv2
-import matplotlib
 import numpy as np
 
-def incremental_reconstruction(relative_poses, matches, intrinsics):
-    # Implementation for incremental SfM reconstruction
-    pass
+
+# ---------------------------------------------------------------------------
+# Initial-pair selection helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PairCandidate:
+    """Two-view geometry summary for one candidate initial pair."""
+
+    image_i: str
+    image_j: str
+    ransac_inliers: int          # from the Week 2 CSV (fundamental-matrix RANSAC)
+    pose_inliers: int            # cheirality-valid inliers after pose recovery
+    triangulated_points: int     # finite points used for the angle estimate
+    median_tri_angle: float      # degrees -- the baseline / parallax measure
+
+    def passes_gate(self, min_tri_angle: float) -> bool:
+        return self.median_tri_angle >= min_tri_angle
+
+    def as_dict(self) -> dict:
+        return {
+            "image_i": self.image_i,
+            "image_j": self.image_j,
+            "ransac_inliers": self.ransac_inliers,
+            "pose_inliers": self.pose_inliers,
+            "triangulated_points": self.triangulated_points,
+            "median_tri_angle_deg": round(self.median_tri_angle, 4),
+        }
+
+
+def median_triangulation_angle(
+    points3d: np.ndarray,
+    R: np.ndarray,
+    t: np.ndarray,
+) -> float:
+    """Median parallax angle (degrees) at the triangulated points.
+
+    Camera 1 sits at the origin; camera 2's centre is C2 = -R^T t. For each 3D
+    point X the angle between the rays X->C1 and X->C2 is the triangulation
+    angle. The angle is invariant to the unknown global scale, so it is a
+    reliable baseline measure straight out of two-view pose recovery.
+    """
+    points3d = np.asarray(points3d, dtype=np.float64)
+    if points3d.ndim != 2 or points3d.shape[1] != 3 or len(points3d) == 0:
+        return 0.0
+
+    finite = np.isfinite(points3d).all(axis=1)
+    X = points3d[finite]
+    if len(X) == 0:
+        return 0.0
+
+    R = np.asarray(R, dtype=np.float64)
+    t = np.asarray(t, dtype=np.float64).reshape(3, 1)
+    c2 = (-R.T @ t).ravel()
+
+    ray1 = -X            # origin - X
+    ray2 = c2 - X
+    n1 = np.linalg.norm(ray1, axis=1)
+    n2 = np.linalg.norm(ray2, axis=1)
+    valid = (n1 > 0) & (n2 > 0)
+    if not np.any(valid):
+        return 0.0
+
+    cos_angle = np.einsum("ij,ij->i", ray1[valid], ray2[valid]) / (n1[valid] * n2[valid])
+    angles = np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
+    return float(np.median(angles))
+
+
+def choose_initial_pair(
+    candidates: list[PairCandidate],
+    min_tri_angle: float = 5.0,
+) -> PairCandidate:
+    """Pick the best initial pair from evaluated candidates.
+
+    Prefer pairs whose median triangulation angle clears `min_tri_angle` (enough
+    baseline for stable triangulation); among those, take the one with the most
+    pose inliers. If none clear the gate, fall back to the best by pose inliers
+    so the caller is never left without an initial pair.
+    """
+    if not candidates:
+        raise ValueError("No candidates to choose from")
+
+    passing = [c for c in candidates if c.passes_gate(min_tri_angle)]
+    pool = passing if passing else candidates
+    return max(pool, key=lambda c: c.pose_inliers)
+
+
+# ---------------------------------------------------------------------------
+# Geometry helpers
+# ---------------------------------------------------------------------------
+
+
+def triangulate_general(
+    K: np.ndarray,
+    R1: np.ndarray,
+    t1: np.ndarray,
+    R2: np.ndarray,
+    t2: np.ndarray,
+    pts1: np.ndarray,
+    pts2: np.ndarray,
+) -> np.ndarray:
+    """Triangulate points seen by two cameras with arbitrary poses.
+
+    Unlike Week 3's `triangulate_points`, neither camera is assumed to be at the
+    origin: both projection matrices are built explicitly as K[R|t].
+    """
+    K = np.asarray(K, dtype=np.float64)
+    P1 = K @ np.hstack((np.asarray(R1, dtype=np.float64), np.asarray(t1, dtype=np.float64).reshape(3, 1)))
+    P2 = K @ np.hstack((np.asarray(R2, dtype=np.float64), np.asarray(t2, dtype=np.float64).reshape(3, 1)))
+
+    pts1 = np.asarray(pts1, dtype=np.float64)
+    pts2 = np.asarray(pts2, dtype=np.float64)
+    if len(pts1) == 0:
+        return np.empty((0, 3), dtype=np.float64)
+
+    points4d = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        points3d = (points4d[:3] / points4d[3]).T
+    return points3d.astype(np.float64)
+
+
+def _depths_in_camera(points3d: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """Z-coordinate of each point in the camera frame X_cam = R X + t."""
+    R = np.asarray(R, dtype=np.float64)
+    t = np.asarray(t, dtype=np.float64).reshape(3, 1)
+    cam = R @ points3d.T + t
+    return cam[2]
+
+
+# ---------------------------------------------------------------------------
+# Reconstruction state
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Track:
+    """One 3D point and the image observations that produced it."""
+
+    point_id: int
+    xyz: np.ndarray                       # (3,)
+    colour: np.ndarray                    # (3,) uint8
+    observations: dict[int, int] = field(default_factory=dict)  # image_id -> keypoint_idx
+
+
+@dataclass
+class RegisteredImage:
+    """A camera that has been placed in the reconstruction frame."""
+
+    image_id: int
+    R: np.ndarray                         # (3, 3) world->camera rotation
+    t: np.ndarray                         # (3, 1) translation
+    kpidx_to_point: dict[int, int] = field(default_factory=dict)  # keypoint_idx -> point_id
+
+
+@dataclass
+class StepMetrics:
+    """One incremental registration step (report evidence)."""
+
+    step: int
+    image: str
+    n_2d3d: int
+    pnp_inliers: int
+    new_points: int
+    n_registered: int
+    n_points: int
+
+    def as_dict(self) -> dict:
+        return {
+            "step": self.step,
+            "image": self.image,
+            "n_2d3d": self.n_2d3d,
+            "pnp_inliers": self.pnp_inliers,
+            "new_points": self.new_points,
+            "n_registered": self.n_registered,
+            "n_points": self.n_points,
+        }
+
+
+class IncrementalReconstruction:
+    """Greedy incremental SfM over a pool of images.
+
+    Parameters
+    ----------
+    K
+        Shared camera intrinsics (single-camera assumption; all images same
+        resolution after resizing).
+    features
+        Mapping image_id -> Week 2 ImageFeatures (image, keypoints, descriptors).
+    pair_matches
+        Mapping (i, j) with i < j -> list of (keypoint_idx_i, keypoint_idx_j)
+        Lowe-filtered matches.
+    geom
+        The loaded Week 3 two_view_utils module (geometry functions).
+    """
+
+    def __init__(self, K, features: dict, pair_matches: dict, geom):
+        self.K = np.asarray(K, dtype=np.float64)
+        self.features = features
+        self.pair_matches = pair_matches
+        self.geom = geom
+
+        self.registered: dict[int, RegisteredImage] = {}
+        self.tracks: dict[int, Track] = {}
+        self.next_point_id = 0
+        self._last_pnp_inliers = 0
+
+    # -- low-level helpers --------------------------------------------------
+
+    def matches_between(self, a: int, b: int) -> list[tuple[int, int]]:
+        """Matches oriented as (keypoint_idx_a, keypoint_idx_b)."""
+        if a == b:
+            return []
+        if a < b:
+            return self.pair_matches.get((a, b), [])
+        return [(q, p) for (p, q) in self.pair_matches.get((b, a), [])]
+
+    def _pts_from_pairs(self, a: int, b: int, pairs: list[tuple[int, int]]):
+        kpa = self.features[a].keypoints
+        kpb = self.features[b].keypoints
+        pa = np.array([kpa[i].pt for (i, _) in pairs], dtype=np.float64)
+        pb = np.array([kpb[j].pt for (_, j) in pairs], dtype=np.float64)
+        return pa, pb
+
+    def _add_track(self, xyz: np.ndarray, colour: np.ndarray, observations: dict) -> int:
+        pid = self.next_point_id
+        self.next_point_id += 1
+        self.tracks[pid] = Track(
+            point_id=pid,
+            xyz=np.asarray(xyz, dtype=np.float64),
+            colour=np.asarray(colour),
+            observations=dict(observations),
+        )
+        for img_id, kp in observations.items():
+            self.registered[img_id].kpidx_to_point[kp] = pid
+        return pid
+
+    # -- initial pair -------------------------------------------------------
+
+    def two_view_geometry(
+        self,
+        i: int,
+        j: int,
+        ransac_threshold: float = 1.0,
+        confidence: float = 0.999,
+    ) -> tuple[int, int, float] | None:
+        """Score a candidate pair: (pose_inliers, finite_points, tri_angle).
+
+        Does not modify reconstruction state; used for initial-pair selection.
+        """
+        pairs = self.matches_between(i, j)
+        if len(pairs) < 8:
+            return None
+        pts_i, pts_j = self._pts_from_pairs(i, j, pairs)
+        try:
+            E, emask = self.geom.estimate_essential_matrix(
+                pts_i, pts_j, self.K, threshold=ransac_threshold, confidence=confidence
+            )
+            R, t, pose_mask = self.geom.recover_relative_pose(
+                E, pts_i, pts_j, self.K, inlier_mask=emask
+            )
+        except Exception:
+            return None
+        X = self.geom.triangulate_points(pts_i[pose_mask], pts_j[pose_mask], self.K, R, t)
+        angle = median_triangulation_angle(X, R, t)
+        return int(np.sum(pose_mask)), int(np.isfinite(X).all(axis=1).sum()), angle
+
+    def initialise_two_view(
+        self,
+        i: int,
+        j: int,
+        *,
+        ransac_threshold: float = 1.0,
+        confidence: float = 0.999,
+        max_reproj: float = 4.0,
+    ) -> int:
+        """Bootstrap the reconstruction from a seed pair. Returns #seed points."""
+        pairs = self.matches_between(i, j)
+        if len(pairs) < 8:
+            raise ValueError(f"Seed pair has too few matches: {len(pairs)}")
+
+        pts_i, pts_j = self._pts_from_pairs(i, j, pairs)
+        E, emask = self.geom.estimate_essential_matrix(
+            pts_i, pts_j, self.K, threshold=ransac_threshold, confidence=confidence
+        )
+        R, t, pose_mask = self.geom.recover_relative_pose(
+            E, pts_i, pts_j, self.K, inlier_mask=emask
+        )
+
+        eye = np.eye(3)
+        zero = np.zeros((3, 1))
+        self.registered[i] = RegisteredImage(i, eye, zero)
+        self.registered[j] = RegisteredImage(j, np.asarray(R, dtype=np.float64),
+                                             np.asarray(t, dtype=np.float64).reshape(3, 1))
+
+        pts_i_p = pts_i[pose_mask]
+        pts_j_p = pts_j[pose_mask]
+        pairs_p = [p for p, keep in zip(pairs, pose_mask) if keep]
+
+        X = self.geom.triangulate_points(pts_i_p, pts_j_p, self.K, R, t)
+        err1 = self.geom.compute_reprojection_errors(X, pts_i_p, self.K, eye, zero)
+        err2 = self.geom.compute_reprojection_errors(X, pts_j_p, self.K, R, t)
+        keep = self.geom.filter_reconstructed_points(
+            X, err1, err2, R, t, max_reprojection_error=max_reproj
+        )
+
+        colours = self.geom.sample_point_colours(self.features[i].image, pts_i_p[keep])
+        kept_pairs = [p for p, k in zip(pairs_p, keep) if k]
+        for (i_kp, j_kp), xyz, colour in zip(kept_pairs, X[keep], colours):
+            self._add_track(xyz, colour, {i: i_kp, j: j_kp})
+        return int(np.sum(keep))
+
+    # -- incremental growth -------------------------------------------------
+
+    def gather_2d3d(self, u: int) -> dict:
+        """Collect 2D-3D correspondences for an unregistered image `u`.
+
+        For each registered image, follow matches into its keypoint->point map.
+        Each `u` keypoint is used once (first match wins).
+        """
+        seen: dict[int, int] = {}   # u_keypoint_idx -> point_id
+        for r in self.registered:
+            reg = self.registered[r]
+            for (r_kp, u_kp) in self.matches_between(r, u):
+                if u_kp in seen:
+                    continue
+                pid = reg.kpidx_to_point.get(r_kp)
+                if pid is not None:
+                    seen[u_kp] = pid
+
+        if not seen:
+            return {"count": 0, "points3d": np.empty((0, 3)), "pts2d": np.empty((0, 2)),
+                    "u_kp": [], "point_ids": []}
+
+        u_kps = list(seen.keys())
+        point_ids = [seen[k] for k in u_kps]
+        kp = self.features[u].keypoints
+        pts2d = np.array([kp[k].pt for k in u_kps], dtype=np.float64)
+        points3d = np.array([self.tracks[pid].xyz for pid in point_ids], dtype=np.float64)
+        return {"count": len(u_kps), "points3d": points3d, "pts2d": pts2d,
+                "u_kp": u_kps, "point_ids": point_ids}
+
+    def _find_next(self, rejected: set) -> tuple[int | None, dict | None]:
+        best_u = None
+        best_corr = None
+        best_count = -1
+        for u in self.features:
+            if u in self.registered or u in rejected:
+                continue
+            corr = self.gather_2d3d(u)
+            if corr["count"] > best_count:
+                best_count = corr["count"]
+                best_u = u
+                best_corr = corr
+        return best_u, best_corr
+
+    def _register(
+        self,
+        u: int,
+        corr: dict,
+        *,
+        min_pnp_inliers: int,
+        pnp_threshold: float,
+        confidence: float,
+    ) -> bool:
+        if corr["count"] < 6:
+            return False
+        try:
+            R, t, mask = self.geom.estimate_camera_pose_pnp(
+                corr["points3d"], corr["pts2d"], self.K,
+                threshold=pnp_threshold, confidence=confidence,
+            )
+        except Exception:
+            return False
+
+        inliers = int(np.sum(mask))
+        if inliers < min_pnp_inliers:
+            return False
+
+        self.registered[u] = RegisteredImage(
+            u, np.asarray(R, dtype=np.float64), np.asarray(t, dtype=np.float64).reshape(3, 1)
+        )
+        for idx in np.nonzero(mask)[0]:
+            pid = corr["point_ids"][idx]
+            u_kp = corr["u_kp"][idx]
+            self.registered[u].kpidx_to_point[u_kp] = pid
+            self.tracks[pid].observations[u] = u_kp
+        self._last_pnp_inliers = inliers
+        return True
+
+    def triangulate_new_points(self, u: int, max_reproj: float = 4.0) -> int:
+        """Triangulate points `u` shares with registered neighbours that are
+        not yet in the map. Returns the number of new points added."""
+        added = 0
+        reg_u = self.registered[u]
+        Ru, tu = reg_u.R, reg_u.t
+
+        for r in list(self.registered):
+            if r == u:
+                continue
+            reg_r = self.registered[r]
+            fresh = [
+                (r_kp, u_kp)
+                for (r_kp, u_kp) in self.matches_between(r, u)
+                if r_kp not in reg_r.kpidx_to_point and u_kp not in reg_u.kpidx_to_point
+            ]
+            if not fresh:
+                continue
+
+            pts_r, pts_u = self._pts_from_pairs(r, u, fresh)
+            X = triangulate_general(self.K, reg_r.R, reg_r.t, Ru, tu, pts_r, pts_u)
+            err_r = self.geom.compute_reprojection_errors(X, pts_r, self.K, reg_r.R, reg_r.t)
+            err_u = self.geom.compute_reprojection_errors(X, pts_u, self.K, Ru, tu)
+            depth_r = _depths_in_camera(X, reg_r.R, reg_r.t)
+            depth_u = _depths_in_camera(X, Ru, tu)
+            keep = (
+                np.isfinite(X).all(axis=1)
+                & (depth_r > 0) & (depth_u > 0)
+                & np.isfinite(err_r) & np.isfinite(err_u)
+                & (err_r <= max_reproj) & (err_u <= max_reproj)
+            )
+            if not np.any(keep):
+                continue
+
+            colours = self.geom.sample_point_colours(self.features[r].image, pts_r[keep])
+            kept_fresh = [p for p, k in zip(fresh, keep) if k]
+            for (r_kp, u_kp), xyz, colour in zip(kept_fresh, X[keep], colours):
+                # A u keypoint may match several neighbours; skip if already linked
+                # by an earlier neighbour in this loop.
+                if u_kp in reg_u.kpidx_to_point:
+                    continue
+                self._add_track(xyz, colour, {r: r_kp, u: u_kp})
+                added += 1
+        return added
+
+    def run(
+        self,
+        *,
+        min_corr: int = 20,
+        min_pnp_inliers: int = 15,
+        pnp_threshold: float = 6.0,
+        confidence: float = 0.999,
+        max_reproj: float = 4.0,
+    ) -> list[StepMetrics]:
+        """Greedily register the remaining pool images. Returns per-step metrics."""
+        if len(self.registered) < 2:
+            raise RuntimeError("Call initialise_two_view before run()")
+
+        metrics: list[StepMetrics] = []
+        rejected: set = set()
+        step = 0
+
+        while True:
+            u, corr = self._find_next(rejected)
+            if u is None or corr["count"] < min_corr:
+                break
+
+            ok = self._register(
+                u, corr,
+                min_pnp_inliers=min_pnp_inliers,
+                pnp_threshold=pnp_threshold,
+                confidence=confidence,
+            )
+            if not ok:
+                rejected.add(u)        # too weak for now; retry after structure grows
+                continue
+
+            new_points = self.triangulate_new_points(u, max_reproj=max_reproj)
+            rejected.clear()           # the cloud changed; give failed images another chance
+            step += 1
+            metrics.append(StepMetrics(
+                step=step,
+                image=self.features[u].path.name,
+                n_2d3d=corr["count"],
+                pnp_inliers=self._last_pnp_inliers,
+                new_points=new_points,
+                n_registered=len(self.registered),
+                n_points=len(self.tracks),
+            ))
+        return metrics
+
+    # -- outputs ------------------------------------------------------------
+
+    def point_cloud(self) -> tuple[np.ndarray, np.ndarray]:
+        if not self.tracks:
+            return np.empty((0, 3)), np.empty((0, 3))
+        pts = np.array([t.xyz for t in self.tracks.values()], dtype=np.float64)
+        cols = np.array([t.colour for t in self.tracks.values()])
+        return pts, cols
+
+    def camera_list(self) -> list[tuple[str, np.ndarray, np.ndarray]]:
+        return [
+            (self.features[i].path.name, self.registered[i].R, self.registered[i].t)
+            for i in sorted(self.registered)
+        ]
+
+    def reprojection_errors(self) -> np.ndarray:
+        errors = []
+        for track in self.tracks.values():
+            for img_id, kp in track.observations.items():
+                reg = self.registered[img_id]
+                proj = self.geom.project_points(track.xyz.reshape(1, 3), self.K, reg.R, reg.t)
+                obs = np.array(self.features[img_id].keypoints[kp].pt, dtype=np.float64)
+                errors.append(float(np.linalg.norm(proj[0] - obs)))
+        return np.array(errors, dtype=np.float64)
