@@ -137,21 +137,21 @@ def make_camera_matrix(
     )
 
 
-def _mask_to_bool(mask: np.ndarray | None, length: int) -> np.ndarray:
+def _mask_to_bool(mask: np.ndarray | None, length: int) -> np.ndarray: # Extra function to handle OpenCV's inlier masks, which can be None or uint8 arrays.
     if mask is None:
         return np.ones(length, dtype=bool)
 
-    mask = np.asarray(mask).reshape(-1)
+    mask = np.asarray(mask).reshape(-1) # Reshapes mask to 1D array
     if mask.size != length:
         raise ValueError(f"Expected mask of length {length}, got {mask.size}")
-    return mask.astype(bool)
+    return mask.astype(bool) # Returns a flat boolean mask
 
 
-def _essential_candidates(E: np.ndarray) -> list[np.ndarray]:
+def _essential_candidates(E: np.ndarray) -> list[np.ndarray]: # Function to catch the multiple essential matrix candidates that OpenCV's findEssentialMat can return when using RANSAC.
     E = np.asarray(E, dtype=np.float64)
     if E.shape == (3, 3):
-        return [E]
-    if E.ndim == 2 and E.shape[1] == 3 and E.shape[0] % 3 == 0:
+        return [E] # If E is a single 3x3 matrix, return it as the only candidate
+    if E.ndim == 2 and E.shape[1] == 3 and E.shape[0] % 3 == 0: # If E is a stack of 3x3 matrices, split it into a list of candidates
         return [E[i : i + 3] for i in range(0, E.shape[0], 3)]
     raise ValueError(f"Essential matrix has unsupported shape {E.shape}")
 
@@ -211,7 +211,7 @@ def recover_relative_pose(
     best_R = None
     best_t = None
     best_mask = None
-    for E_candidate in _essential_candidates(E):
+    for E_candidate in _essential_candidates(E): # Checks each candidate essential matrix returned by findEssentialMat and keeps the one with the most inliers after recoverPose, using the same inlier mask from findEssentialMat if provided.
         pose_mask = None if inlier_mask is None else inlier_mask.copy()
         _, R, t, mask = cv2.recoverPose(
             E_candidate,
@@ -242,10 +242,10 @@ def make_projection_matrices(
     R: np.ndarray,
     t: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Create projection matrices P1 = K[I|0] and P2 = K[R|t]."""
+    """Create projection matrices P1 = K[I|0] and P2 = K[R|t]. The first camera is assumed to be at the origin with identity rotation, and the second camera has rotation R and translation t."""
     K = np.asarray(K, dtype=np.float64)
     R = np.asarray(R, dtype=np.float64)
-    t = np.asarray(t, dtype=np.float64).reshape(3, 1)
+    t = np.asarray(t, dtype=np.float64).reshape(3, 1) # Resapes t to be a column vector
     if K.shape != (3, 3) or R.shape != (3, 3):
         raise ValueError("K and R must both be 3x3 matrices")
 
@@ -271,10 +271,10 @@ def triangulate_points(
         return np.empty((0, 3), dtype=np.float64)
 
     P1, P2 = make_projection_matrices(K, R, t)
-    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+    points4d_hom = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T) # Triangulates points in homogeneous coordinates (4D) using OpenCV's triangulatePoints function, which takes the projection matrices and corresponding points from both images. The output is a 4xN array where each column is a homogeneous 3D point (X, Y, Z, W).
 
-    with np.errstate(divide="ignore", invalid="ignore"):
-        points3d = (points4d_hom[:3] / points4d_hom[3]).T
+    with np.errstate(divide="ignore", invalid="ignore"): # Converts homogeneous coordinates to 3D by dividing by the last coordinate,
+        points3d = (points4d_hom[:3] / points4d_hom[3]).T # while ignoring division by 0 errors (e.g. when the two projected rays are parallel) or invalid values. The resulting points will have NaN or inf that can be filtered downstream without raising an error.
     return points3d.astype(np.float64)
 
 
