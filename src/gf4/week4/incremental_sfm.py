@@ -625,6 +625,7 @@ class IncrementalReconstruction:
         pnp_threshold: float = 6.0,
         confidence: float = 0.999,
         max_reproj: float = 4.0,
+        retriangulate_interval: int = 5,   # 0 disables in-loop retriangulation
     ) -> list[StepMetrics]:
         """Greedily register the remaining pool images. Returns per-step metrics."""
         if len(self.registered) < 2:
@@ -654,6 +655,10 @@ class IncrementalReconstruction:
             new_points = self.triangulate_new_points(u, max_reproj=max_reproj)
             rejected.clear()           # the cloud changed; give failed images another chance
             step += 1
+            retri = 0
+            if retriangulate_interval and step % retriangulate_interval == 0:
+                retri = self.retriangulate(max_reproj=max_reproj)
+                rejected.clear()       # cloud improved; let stalled images retry
             metrics.append(StepMetrics(
                 step=step,
                 image=self.features[u].path.name,
@@ -662,7 +667,9 @@ class IncrementalReconstruction:
                 new_points=new_points,
                 n_registered=len(self.registered),
                 n_points=len(self.tracks),
+                retriangulated=retri,
             ))
+        self.retriangulate(max_reproj=max_reproj)   # final pass over the full cloud
         return metrics
 
 
