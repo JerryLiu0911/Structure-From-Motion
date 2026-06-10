@@ -26,10 +26,59 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 
-from week4_pipeline import add_camera_frusta
-
 
 DEFAULT_PLY = Path(__file__).resolve().parents[3] / "out" / "week4-doge-fixed" / "points3d.ply"
+
+
+def _camera_frustum(R: np.ndarray, t: np.ndarray, K: np.ndarray, depth: float):
+    """Wireframe frustum (apex + 4 image-plane corners) for one camera, in WORLD
+    coordinates.
+
+    Pose is world->camera (`x_cam = R x + t`), so a camera-frame point maps back
+    as `x_world = R^T (x_cam - t)` and the centre is `C = -R^T t`. The four image
+    corners are back-projected through `K` to the given `depth`, giving a pyramid
+    whose aspect/field-of-view matches the real camera. Returns
+    `(points (5, 3), lines)` where `lines` is the VTK connectivity array (apex to
+    each corner, plus the image-plane rectangle).
+    """
+    R = np.asarray(R, dtype=np.float64)
+    t = np.asarray(t, dtype=np.float64).reshape(3)
+    K = np.asarray(K, dtype=np.float64)
+
+    C = -R.T @ t
+    W, H = 2.0 * K[0, 2], 2.0 * K[1, 2]               # principal point is auto-centred
+    corners_px = np.array([[0, 0, 1], [W, 0, 1], [W, H, 1], [0, H, 1]], dtype=np.float64)
+    dirs = (np.linalg.inv(K) @ corners_px.T).T        # ray directions in camera frame (z>0)
+    corner_cam = dirs / dirs[:, 2:3] * depth          # each corner placed at depth `depth`
+    corners_world = (R.T @ (corner_cam - t).T).T      # x_world = R^T (x_cam - t)
+
+    pts = np.vstack([C, corners_world])               # 0 = apex, 1..4 = image-plane corners
+    segs = [(0, 1), (0, 2), (0, 3), (0, 4), (1, 2), (2, 3), (3, 4), (4, 1)]
+    lines = np.hstack([[2, a, b] for a, b in segs]).astype(np.int64)
+    return pts, lines
+
+
+def add_camera_frusta(plotter, cameras: list, K: np.ndarray, depth: float, *,
+                      draw_trajectory: bool = True, colour: str = "red") -> None:
+    """Draw each camera as a wireframe frustum + centre sphere into an existing
+    PyVista plotter.
+
+    `cameras` is `[(name, R, t), ...]` (the decoded `cameras.json`); `depth` is
+    the frustum size in world units. When `draw_trajectory`, the centres are
+    joined in list order, so the path tears visibly wherever an unregistered
+    image is skipped.
+    """
+    centres = []
+    for _name, R, t in cameras:
+        pts, lines = _camera_frustum(R, t, K, depth)
+        plotter.add_mesh(pv.PolyData(pts, lines=lines), color=colour, line_width=1)
+        centres.append(pts[0])
+    centres = np.asarray(centres, dtype=np.float64)
+    if len(centres):
+        plotter.add_points(pv.PolyData(centres), color=colour, point_size=8,
+                           render_points_as_spheres=True)
+    if draw_trajectory and len(centres) > 1:
+        plotter.add_mesh(pv.lines_from_points(centres), color="black", line_width=1)
 
 
 def parse_args() -> argparse.Namespace:

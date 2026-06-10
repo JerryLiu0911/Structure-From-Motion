@@ -24,11 +24,8 @@ import sys
 
 import numpy as np
 
-from incremental_sfm import (
-    IncrementalReconstruction,
-    PairCandidate,
-    choose_initial_pair,
-)
+from incremental_sfm import IncrementalReconstruction
+import view_cloud  # Ensure the viewer is importable for the --view option, even if PyVista is missing (the viewer imports it lazily)
 
 
 DEFAULT_WEEK2_DIR = Path(__file__).resolve().parents[1] / "week2"
@@ -86,168 +83,6 @@ def build_match_cache(features_by_id: dict, week2, ratio: float=0.8) -> dict: # 
     return cache
 
 
-def select_seed(
-    engine: IncrementalReconstruction,
-    metrics_csv: Path,
-    name_to_id: dict,
-    *,
-    top_k: int,
-    min_inliers: int,
-    min_tri_angle: float,
-    ransac_threshold: float,
-    confidence: float,
-) -> tuple[int, int, list[PairCandidate]]:
-    """Choose a seed pair from the Week 2 CSV using the triangulation-angle gate."""
-    rows = read_metrics_csv(metrics_csv)
-    shortlisted = [r for r in rows if int(r["ransac_inliers"]) >= min_inliers]
-    shortlisted.sort(key=lambda r: int(r["ransac_inliers"]), reverse=True)
-    shortlisted = shortlisted[:top_k]
-
-    candidates: list[PairCandidate] = []
-    for row in shortlisted:
-        if row["image_i"] not in name_to_id or row["image_j"] not in name_to_id:
-            continue
-        i = name_to_id[row["image_i"]]
-        j = name_to_id[row["image_j"]]
-        geom = engine.two_view_geometry(
-            i, j, ransac_threshold=ransac_threshold, confidence=confidence
-        )
-        if geom is None:
-            continue
-        pose_inliers, n_pts, angle = geom
-        candidates.append(
-            PairCandidate(
-                image_i=row["image_i"],
-                image_j=row["image_j"],
-                ransac_inliers=int(row["ransac_inliers"]),
-                pose_inliers=pose_inliers,
-                triangulated_points=n_pts,
-                median_tri_angle=angle,
-            )
-        )
-
-    if not candidates:
-        raise ValueError("No usable initial-pair candidates from the CSV / pool")
-
-    chosen = choose_initial_pair(candidates, min_tri_angle=min_tri_angle)
-    return name_to_id[chosen.image_i], name_to_id[chosen.image_j], candidates
-
-
-def _camera_frustum(R: np.ndarray, t: np.ndarray, K: np.ndarray, depth: float):
-    """Wireframe frustum (apex + 4 image-plane corners) for one camera, in WORLD
-    coordinates.
-
-    Pose is world->camera (`x_cam = R x + t`), so a camera-frame point maps back
-    as `x_world = R^T (x_cam - t)` and the centre is `C = -R^T t`. The four image
-    corners are back-projected through `K` to the given `depth`, giving a pyramid
-    whose aspect/field-of-view matches the real camera. Returns
-    `(points (5, 3), lines)` where `lines` is the VTK connectivity array (apex to
-    each corner, plus the image-plane rectangle).
-    """
-    R = np.asarray(R, dtype=np.float64)
-    t = np.asarray(t, dtype=np.float64).reshape(3)
-    K = np.asarray(K, dtype=np.float64)
-
-    C = -R.T @ t
-    W, H = 2.0 * K[0, 2], 2.0 * K[1, 2]               # principal point is auto-centred
-    corners_px = np.array([[0, 0, 1], [W, 0, 1], [W, H, 1], [0, H, 1]], dtype=np.float64)
-    dirs = (np.linalg.inv(K) @ corners_px.T).T        # ray directions in camera frame (z>0)
-    corner_cam = dirs / dirs[:, 2:3] * depth          # each corner placed at depth `depth`
-    corners_world = (R.T @ (corner_cam - t).T).T      # x_world = R^T (x_cam - t)
-
-    pts = np.vstack([C, corners_world])               # 0 = apex, 1..4 = image-plane corners
-    segs = [(0, 1), (0, 2), (0, 3), (0, 4), (1, 2), (2, 3), (3, 4), (4, 1)]
-    lines = np.hstack([[2, a, b] for a, b in segs]).astype(np.int64)
-    return pts, lines
-
-
-def add_camera_frusta(plotter, cameras: list, K: np.ndarray, depth: float, *,
-                      draw_trajectory: bool = True, colour: str = "red") -> None:
-    """Draw each camera as a wireframe frustum + centre sphere into an existing
-    PyVista plotter.
-
-    `cameras` is `[(name, R, t), ...]` (e.g. `engine.camera_list()` or the
-    decoded `cameras.json`); `depth` is the frustum size in world units. When
-    `draw_trajectory`, the centres are joined in list order, so the path tears
-    visibly wherever an unregistered image is skipped. Shared by the pipeline's
-    `render_point_cloud` and the standalone `view_cloud.py` viewer so the two
-    stay in lockstep.
-    """
-    import pyvista as pv
-
-    centres = []
-    for _name, R, t in cameras:
-        pts, lines = _camera_frustum(R, t, K, depth)
-        plotter.add_mesh(pv.PolyData(pts, lines=lines), color=colour, line_width=1)
-        centres.append(pts[0])
-    centres = np.asarray(centres, dtype=np.float64)
-    if len(centres):
-        plotter.add_points(pv.PolyData(centres), color=colour, point_size=8,
-                           render_points_as_spheres=True)
-    if draw_trajectory and len(centres) > 1:
-        plotter.add_mesh(pv.lines_from_points(centres), color="black", line_width=1)
-
-
-def render_point_cloud(
-    points: np.ndarray,
-    colours: np.ndarray,
-    *,
-    cameras: list | None = None,
-    K: np.ndarray | None = None,
-    screenshot_path: Path | None = None,
-    show: bool = False,
-    point_size: float = 3.0,
-    camera_scale: float = 0.04,
-    draw_trajectory: bool = True,
-) -> None:
-    """Visualise the sparse cloud with PyVista (Open3D-style interactive view).
-
-    Open3D has no Python 3.13 wheel, so PyVista (VTK) is used instead. Colours
-    are stored RGB in [0, 255] (Week 3 `sample_point_colours` already swaps
-    BGR->RGB), so they only need scaling to [0, 1]. Imported lazily so the rest
-    of the pipeline runs even if PyVista is absent.
-
-    If `cameras` (a list of `(name, R, t)` from `engine.camera_list()`) and `K`
-    are given, each registered camera is drawn COLMAP-style as a red wireframe
-    frustum with its centre marked, and (when `draw_trajectory`) the centres are
-    joined in registration order -- the path visibly tears wherever unregistered
-    images are skipped, which is the "where did registration fail" diagnostic.
-    Frustum depth is `camera_scale` x the cloud's bounding-box diagonal so the
-    cameras stay legible regardless of the reconstruction's arbitrary scale.
-    """
-    import pyvista as pv
-
-    points = np.asarray(points, dtype=np.float64)
-    if len(points) == 0:
-        raise ValueError("No 3D points to visualise")
-
-    rgb = np.asarray(colours, dtype=np.float64)
-    if rgb.size and rgb.max() > 1.0:
-        rgb = rgb / 255.0
-
-    plotter = pv.Plotter(off_screen=not show)
-    plotter.add_points(
-        pv.PolyData(points),
-        scalars=rgb if rgb.size else None,
-        rgb=rgb.size > 0,
-        point_size=point_size,
-        render_points_as_spheres=True,
-    )
-
-    if cameras and K is not None:
-        diag = float(np.linalg.norm(points.max(axis=0) - points.min(axis=0)))
-        depth = camera_scale * diag if diag > 0 else camera_scale
-        add_camera_frusta(plotter, cameras, K, depth, draw_trajectory=draw_trajectory)
-
-    plotter.add_axes()
-    plotter.set_background("white")
-    if screenshot_path is not None:
-        plotter.screenshot(str(screenshot_path))
-    if show:
-        plotter.show()
-    plotter.close()
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="GF4 Week 4 incremental multi-view reconstruction pipeline."
@@ -290,11 +125,6 @@ def parse_args() -> argparse.Namespace:
                              "to recover focal length in pixels.")
     parser.add_argument("--max-features", type=int, default=4000)
     parser.add_argument("--max-image-size", type=int, default=1600)
-    parser.add_argument("--view", action="store_true",
-                        help="Open an interactive PyVista window of the point cloud "
-                             "(needs a display; DISPLAY is set under WSLg).", default=True)
-    parser.add_argument("--no-screenshot", action="store_true",
-                        help="Skip writing the PyVista point-cloud screenshot.")
 
     args = parser.parse_args()
     if args.max_image_size == 0:
@@ -339,8 +169,9 @@ def main() -> int:
     # Selects the initial seed pair. It reads the pairwise metrics from the provided CSV file, filters and ranks candidate pairs 
     # based on the number of RANSAC inliers, and then re-scores the top candidates using the actual two-view geometry to compute 
     # pose inliers and triangulation angles. The final selection is made using a combination of pose inliers and a minimum triangulation angle threshold to ensure a good baseline for reconstruction.
-    seed_i, seed_j, candidates = select_seed(
-        engine, args.metrics_csv, name_to_id,
+    rows = read_metrics_csv(args.metrics_csv)
+    seed_i, seed_j, candidates = engine.select_initial_pair(
+        rows,
         top_k=args.top_k, min_inliers=args.min_inliers,
         min_tri_angle=args.min_tri_angle,
         ransac_threshold=args.ransac_threshold, confidence=args.confidence,
@@ -396,17 +227,6 @@ def main() -> int:
         output_dir / "multi_view_reconstruction.png",
     )
 
-    if not args.no_screenshot or args.view:
-        screenshot = None if args.no_screenshot else output_dir / "point_cloud_pyvista.png"
-        try:
-            render_point_cloud(
-                points, colours,
-                cameras=engine.camera_list(), K=K,
-                screenshot_path=screenshot, show=args.view,
-            )
-        except Exception as exc:  # PyVista missing or no GL context -- non-fatal
-            print(f"  (point-cloud view skipped: {exc})")
-
     errors = engine.reprojection_errors()
     registered_names = [self_name for self_name, _, _ in engine.camera_list()]
     rejected = [
@@ -425,6 +245,7 @@ def main() -> int:
     if rejected:
         print(f"  not registered : {', '.join(rejected)}")
     print(f"  wrote: {output_dir}")
+    print(f"  view: python view_cloud.py --path {output_dir / 'points3d.ply'}")
     return 0
 
 

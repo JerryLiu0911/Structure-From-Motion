@@ -272,6 +272,62 @@ class IncrementalReconstruction:
         angle = median_triangulation_angle(X, R, t)
         return int(np.sum(pose_mask)), int(np.isfinite(X).all(axis=1).sum()), angle
 
+    def select_initial_pair(
+        self,
+        rows: list[dict],
+        *,
+        top_k: int,
+        min_inliers: int,
+        min_tri_angle: float,
+        ransac_threshold: float = 1.0,
+        confidence: float = 0.999,
+    ) -> tuple[int, int, list["PairCandidate"]]:
+        """Pick the seed pair from parsed Week-2 metric rows.
+
+        `rows` is the Week-2 `pairwise_metrics.csv` already read by the driver
+        (dicts with `image_i` / `image_j` / `ransac_inliers`). The driver owns the
+        file I/O; this owns the *policy* -- shortlist the top-`top_k` pairs by
+        RANSAC inliers, re-score each with `two_view_geometry`, and pick the
+        widest-baseline pair clearing `min_tri_angle` (`choose_initial_pair`). The
+        image-name -> id map is derived from `self.features`, so the driver need
+        not pass it. Returns `(seed_i, seed_j, candidates)`.
+        """
+        name_to_id = {f.path.name: idx for idx, f in self.features.items()}
+        shortlist = sorted(
+            (r for r in rows if int(r["ransac_inliers"]) >= min_inliers),
+            key=lambda r: int(r["ransac_inliers"]),
+            reverse=True,
+        )[:top_k]
+
+        candidates: list[PairCandidate] = []
+        for row in shortlist:
+            i = name_to_id.get(row["image_i"])
+            j = name_to_id.get(row["image_j"])
+            if i is None or j is None:
+                continue
+            geom = self.two_view_geometry(
+                i, j, ransac_threshold=ransac_threshold, confidence=confidence
+            )
+            if geom is None:
+                continue
+            pose_inliers, n_pts, angle = geom
+            candidates.append(
+                PairCandidate(
+                    image_i=row["image_i"],
+                    image_j=row["image_j"],
+                    ransac_inliers=int(row["ransac_inliers"]),
+                    pose_inliers=pose_inliers,
+                    triangulated_points=n_pts,
+                    median_tri_angle=angle,
+                )
+            )
+
+        if not candidates:
+            raise ValueError("No usable initial-pair candidates from the CSV / pool")
+
+        chosen = choose_initial_pair(candidates, min_tri_angle=min_tri_angle)
+        return name_to_id[chosen.image_i], name_to_id[chosen.image_j], candidates
+
     def initialise_two_view(
         self,
         i: int,
@@ -382,7 +438,7 @@ class IncrementalReconstruction:
         if corr["count"] < 6:
             return False
         try:
-            R, t, mask = self.geom.estimate_camera_pose_pnp(
+            R, t, mask = self.week3.estimate_camera_pose_pnp(
                 corr["points3d"], corr["pts2d"], self.K,
                 threshold=pnp_threshold, confidence=confidence,
             )
@@ -450,7 +506,7 @@ class IncrementalReconstruction:
         kp = self.features[u].keypoints
         pts2d = np.array([kp[k].pt for k in u_kps], dtype=np.float64)
         X = np.array([self.tracks[p].xyz for p in pids], dtype=np.float64)
-        err = self.geom.compute_reprojection_errors(X, pts2d, self.K, reg_u.R, reg_u.t)
+        err = self.week3.compute_reprojection_errors(X, pts2d, self.K, reg_u.R, reg_u.t)
 
         added = 0
         for u_kp, pid, e in zip(u_kps, pids, err):
@@ -481,8 +537,8 @@ class IncrementalReconstruction:
 
             pts_r, pts_u = self._pts_from_pairs(r, u, fresh)
             X = triangulate_general(self.K, reg_r.R, reg_r.t, Ru, tu, pts_r, pts_u)
-            err_r = self.geom.compute_reprojection_errors(X, pts_r, self.K, reg_r.R, reg_r.t)
-            err_u = self.geom.compute_reprojection_errors(X, pts_u, self.K, Ru, tu)
+            err_r = self.week3.compute_reprojection_errors(X, pts_r, self.K, reg_r.R, reg_r.t)
+            err_u = self.week3.compute_reprojection_errors(X, pts_u, self.K, Ru, tu)
             depth_r = _depths_in_camera(X, reg_r.R, reg_r.t)
             depth_u = _depths_in_camera(X, Ru, tu)
             ang = _triangulation_angles(X, reg_r.R, reg_r.t, Ru, tu)
@@ -496,7 +552,7 @@ class IncrementalReconstruction:
             if not np.any(keep):
                 continue
 
-            colours = self.geom.sample_point_colours(self.features[r].image, pts_r[keep])
+            colours = self.week3.sample_point_colours(self.features[r].image, pts_r[keep])
             kept_fresh = [p for p, k in zip(fresh, keep) if k]
             for (r_kp, u_kp), xyz, colour in zip(kept_fresh, X[keep], colours):
                 # A u keypoint may match several neighbours; skip if already linked
@@ -575,7 +631,7 @@ class IncrementalReconstruction:
         for track in self.tracks.values():
             for img_id, kp in track.observations.items():
                 reg = self.registered[img_id]
-                proj = self.geom.project_points(track.xyz.reshape(1, 3), self.K, reg.R, reg.t)
+                proj = self.week3.project_points(track.xyz.reshape(1, 3), self.K, reg.R, reg.t)
                 obs = np.array(self.features[img_id].keypoints[kp].pt, dtype=np.float64)
                 errors.append(float(np.linalg.norm(proj[0] - obs)))
         return np.array(errors, dtype=np.float64)
