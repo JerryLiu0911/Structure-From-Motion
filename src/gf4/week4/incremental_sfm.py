@@ -209,8 +209,8 @@ class IncrementalReconstruction:
         self.pair_matches = pair_matches
         self.week3 = week3 # injected Week 3 geometry module
 
-        self.registered: dict[int, RegisteredCamera] = {}
-        self.tracks: dict[int, Track] = {}
+        self.registered: dict[int, RegisteredCamera] = {} # Stores all registered cameras, mapping image IDs to their corresponding RegisteredCamera instances, which contain the camera's rotation, translation, and keypoint-to-point mapping.
+        self.tracks: dict[int, Track] = {} # Stores all reconstructed 3D points (tracks), mapping point IDs to their corresponding Track instances, which contain the 3D coordinates, color, and observations of each point across the registered images.
         self.next_point_id = 0
         self._last_pnp_inliers = 0
 
@@ -229,7 +229,8 @@ class IncrementalReconstruction:
         pb = np.array([kpb[j].pt for (_, j) in pairs], dtype=np.float64)
         return pa, pb
 
-    def _add_track(self, xyz: np.ndarray, colour: np.ndarray, observations: dict) -> int:
+    def _add_track(self, xyz: np.ndarray, colour: np.ndarray, observations: dict[int, int]) -> int:
+        """Add a new 3D point to the reconstruction."""
         pid = self.next_point_id
         self.next_point_id += 1
         self.tracks[pid] = Track(
@@ -241,8 +242,6 @@ class IncrementalReconstruction:
         for img_id, kp in observations.items():
             self.registered[img_id].kpidx_to_point[kp] = pid
         return pid
-
-    # -- initial pair -------------------------------------------------------
 
     def two_view_geometry(
         self,
@@ -268,7 +267,7 @@ class IncrementalReconstruction:
             )
         except Exception:
             return None
-        X = self.week3.triangulate_points(pts_i[pose_mask], pts_j[pose_mask], self.K, R, t)
+        X = self.week3.triangulate_points(pts_i[pose_mask], pts_j[pose_mask], self.K, R, t) # Returns (Number of inliers, 3) array of triangulated 3D points for the inlier matches, which are then used to compute the median triangulation angle as a measure of the baseline quality between the two views.
         angle = median_triangulation_angle(X, R, t)
         return int(np.sum(pose_mask)), int(np.isfinite(X).all(axis=1).sum()), angle
 
@@ -282,19 +281,15 @@ class IncrementalReconstruction:
         ransac_threshold: float = 1.0,
         confidence: float = 0.999,
     ) -> tuple[int, int, list["PairCandidate"]]:
-        """Pick the seed pair from parsed Week-2 metric rows.
+        """Pick the initial seed pair from parsed Week-2 metric rows. Converts the row data from the csv into a list of PairCandidate objects, 
+        which are then scored using the two_view_geometry function to evaluate their suitability as the initial pair for reconstruction. 
+        The candidates are filtered based on the number of RANSAC inliers and the median triangulation angle, and the best candidate is selected using the choose_initial_pair function.
+        The function returns the image IDs of the selected seed pair and the list of evaluated candidates for reporting purposes.
 
-        `rows` is the Week-2 `pairwise_metrics.csv` already read by the driver
-        (dicts with `image_i` / `image_j` / `ransac_inliers`). The driver owns the
-        file I/O; this owns the *policy* -- shortlist the top-`top_k` pairs by
-        RANSAC inliers, re-score each with `two_view_geometry`, and pick the
-        widest-baseline pair clearing `min_tri_angle` (`choose_initial_pair`). The
-        image-name -> id map is derived from `self.features`, so the driver need
-        not pass it. Returns `(seed_i, seed_j, candidates)`.
         """
         name_to_id = {f.path.name: idx for idx, f in self.features.items()}
         shortlist = sorted(
-            (r for r in rows if int(r["ransac_inliers"]) >= min_inliers),
+            (r for r in rows if int(r["ransac_inliers"]) >= min_inliers), # Reduces search space by filtering out pairs that don't meet the minimum inlier threshold
             key=lambda r: int(r["ransac_inliers"]),
             reverse=True,
         )[:top_k]
@@ -337,7 +332,7 @@ class IncrementalReconstruction:
         confidence: float = 0.999,
         max_reproj: float = 4.0,
     ) -> int:
-        """Bootstrap the reconstruction from a pair of images. Returns number of points in the initial map."""
+        """Initialise the reconstruction from a pair of images. Returns number of points in the initial map."""
         pairs = self.matches_between(i, j)
         if len(pairs) < 8:
             raise ValueError(f"Seed pair has too few matches, needs at least 8 for RANSAC: {len(pairs)}")
@@ -352,44 +347,42 @@ class IncrementalReconstruction:
 
         eye = np.eye(3)
         zero = np.zeros((3, 1))
-        self.registered[i] = RegisteredCamera(i, eye, zero)
+        self.registered[i] = RegisteredCamera(i, eye, zero) # Registers first image as original camera at the world origin with identity rotation and zero translation.
         self.registered[j] = RegisteredCamera(j, np.asarray(R, dtype=np.float64),
                                              np.asarray(t, dtype=np.float64).reshape(3, 1))
 
-        pts_i_p = pts_i[pose_mask]
-        pts_j_p = pts_j[pose_mask]
-        pairs_p = [p for p, keep in zip(pairs, pose_mask) if keep]
+        pts_i_posed = pts_i[pose_mask]
+        pts_j_posed = pts_j[pose_mask]
+        pairs_p = [p for p, keep in zip(pairs, pose_mask) if keep] 
 
-        X = self.week3.triangulate_points(pts_i_p, pts_j_p, self.K, R, t)
-        err1 = self.week3.compute_reprojection_errors(X, pts_i_p, self.K, eye, zero)
-        err2 = self.week3.compute_reprojection_errors(X, pts_j_p, self.K, R, t)
+        X = self.week3.triangulate_points(pts_i_posed, pts_j_posed, self.K, R, t)
+        err1 = self.week3.compute_reprojection_errors(X, pts_i_posed, self.K, eye, zero)
+        err2 = self.week3.compute_reprojection_errors(X, pts_j_posed, self.K, R, t)
         keep = self.week3.filter_reconstructed_points(
             X, err1, err2, R, t, max_reprojection_error=max_reproj
         )
 
-        colours = self.week3.sample_point_colours(self.features[i].image, pts_i_p[keep])
+        colours = self.week3.sample_point_colours(self.features[i].image, pts_i_posed[keep])
         kept_pairs = [p for p, k in zip(pairs_p, keep) if k]
         for (i_kp, j_kp), xyz, colour in zip(kept_pairs, X[keep], colours):
-            self._add_track(xyz, colour, {i: i_kp, j: j_kp})
+            self._add_track(xyz, colour, {i: i_kp, j: j_kp}) # enables back-tracking from the 3D point to its 2D observations in both images, and links those keypoints to the point in the registered cameras.
         return int(np.sum(keep))
 
-    # -- incremental growth -------------------------------------------------
-
-    def gather_2d3d(self, u: int) -> dict:
+    def gather_2d3d(self, new_image_id: int) -> dict:
         """Collect 2D-3D correspondences for an unregistered image `u`.
 
         For each registered image, follow matches into its keypoint->point map.
-        Each `u` keypoint is used once (first match wins).
+        Each keypoint in the unregistered image `new_image_id` is used once (first match wins).
         """
-        seen: dict[int, int] = {}   # u_keypoint_idx -> point_id
+        seen: dict[int, int] = {}   # stores a collection of seen keypoint indices in the unregistered image `new_image_id` and their corresponding 3D point IDs. This mapping is built by iterating through all registered images and their matches to the unregistered image `new_image_id`. For each match, if the keypoint in `new_image_id` has not been seen before, it checks if the corresponding keypoint in the registered image maps to a 3D point ID. If it does, it adds this keypoint index and point ID to the `seen` dictionary. This way, we gather a set of 2D-3D correspondences that can be used for PnP pose estimation when trying to register the new image `new_image_id`.
         for r in self.registered:
             reg = self.registered[r]
-            for (r_kp, u_kp) in self.matches_between(r, u):
+            for (r_kp, u_kp) in self.matches_between(r, new_image_id):
                 if u_kp in seen:
                     continue
-                pid = reg.kpidx_to_point.get(r_kp)
-                if pid is not None:
-                    seen[u_kp] = pid
+                point_id = reg.kpidx_to_point.get(r_kp)
+                if point_id is not None:
+                    seen[u_kp] = point_id
 
         if not seen:
             return {"count": 0, "points3d": np.empty((0, 3)), "pts2d": np.empty((0, 2)),
@@ -397,7 +390,7 @@ class IncrementalReconstruction:
 
         u_kps = list(seen.keys())
         point_ids = [seen[k] for k in u_kps]
-        kp = self.features[u].keypoints
+        kp = self.features[new_image_id].keypoints
         pts2d = np.array([kp[k].pt for k in u_kps], dtype=np.float64)
         points3d = np.array([self.tracks[pid].xyz for pid in point_ids], dtype=np.float64)
         return {"count": len(u_kps), "points3d": points3d, "pts2d": pts2d,
@@ -415,7 +408,7 @@ class IncrementalReconstruction:
         best_u = None
         best_corr = None
         best_count = min_corr - 1          # only counts >= min_corr qualify
-        for u in self.features:
+        for u in self.features: #iteratively goes through each feature and matches it against the registered images to gather 2D-3D correspondences. It keeps track of the image with the most correspondences that meets the minimum threshold, and returns that image and its correspondences for registration in the next step.
             if u in self.registered or u in rejected:
                 continue
             corr = self.gather_2d3d(u)
@@ -466,8 +459,8 @@ class IncrementalReconstruction:
         self._last_pnp_inliers = inliers
         return True
 
-    def _extend_tracks(self, u: int, max_reproj: float = 4.0) -> int:
-        """Link `u`'s remaining keypoints to 3D points already owned by its
+    def _extend_tracks(self, image_id: int, max_reproj: float = 4.0) -> int:
+        """Link `image_id`'s remaining keypoints to 3D points already owned by its
         registered neighbours.
 
         `_register` only links the PnP-inlier correspondences that
@@ -486,16 +479,16 @@ class IncrementalReconstruction:
         (reprojection error within `max_reproj`), so a wrong match cannot poison
         a track. Returns the number of observations added.
         """
-        reg_u = self.registered[u]
-        candidates: dict[int, int] = {}   # u_keypoint_idx -> point_id (first match wins)
+        reg_u = self.registered[image_id]
+        candidates: dict[int, int] = {}   # image_id_keypoint_idx -> point_id (first match wins)
         for r in self.registered:
-            if r == u:
+            if r == image_id:
                 continue
             reg_r = self.registered[r]
-            for (r_kp, u_kp) in self.matches_between(r, u):
+            for (r_kp, u_kp) in self.matches_between(r, image_id):
                 if u_kp in reg_u.kpidx_to_point or u_kp in candidates:
                     continue
-                pid = reg_r.kpidx_to_point.get(r_kp)
+                pid = reg_r.kpidx_to_point.get(r_kp) # 
                 if pid is not None:
                     candidates[u_kp] = pid
         if not candidates:
@@ -503,7 +496,7 @@ class IncrementalReconstruction:
 
         u_kps = list(candidates)
         pids = [candidates[k] for k in u_kps]
-        kp = self.features[u].keypoints
+        kp = self.features[image_id].keypoints
         pts2d = np.array([kp[k].pt for k in u_kps], dtype=np.float64)
         X = np.array([self.tracks[p].xyz for p in pids], dtype=np.float64)
         err = self.week3.compute_reprojection_errors(X, pts2d, self.K, reg_u.R, reg_u.t)
@@ -512,30 +505,30 @@ class IncrementalReconstruction:
         for u_kp, pid, e in zip(u_kps, pids, err):
             if np.isfinite(e) and e <= max_reproj:
                 reg_u.kpidx_to_point[u_kp] = pid
-                self.tracks[pid].observations[u] = u_kp
+                self.tracks[pid].observations[image_id] = u_kp
                 added += 1
         return added
 
-    def triangulate_new_points(self, u: int, max_reproj: float = 4.0, min_tri_angle: float = 2.0) -> int:
-        """Triangulate points `u` shares with registered neighbours that are
+    def triangulate_new_points(self, image_id: int, max_reproj: float = 4.0, min_tri_angle: float = 2.0) -> int:
+        """Triangulate points `image_id` shares with registered neighbours that are
         not yet in the map. Returns the number of new points added."""
         added = 0
-        reg_u = self.registered[u]
+        reg_u = self.registered[image_id]
         Ru, tu = reg_u.R, reg_u.t
 
         for r in list(self.registered):
-            if r == u:
+            if r == image_id:
                 continue
             reg_r = self.registered[r]
             fresh = [
                 (r_kp, u_kp)
-                for (r_kp, u_kp) in self.matches_between(r, u)
+                for (r_kp, u_kp) in self.matches_between(r, image_id)
                 if r_kp not in reg_r.kpidx_to_point and u_kp not in reg_u.kpidx_to_point
             ]
             if not fresh:
                 continue
 
-            pts_r, pts_u = self._pts_from_pairs(r, u, fresh)
+            pts_r, pts_u = self._pts_from_pairs(r, image_id, fresh)
             X = triangulate_general(self.K, reg_r.R, reg_r.t, Ru, tu, pts_r, pts_u)
             err_r = self.week3.compute_reprojection_errors(X, pts_r, self.K, reg_r.R, reg_r.t)
             err_u = self.week3.compute_reprojection_errors(X, pts_u, self.K, Ru, tu)
@@ -559,7 +552,7 @@ class IncrementalReconstruction:
                 # by an earlier neighbour in this loop.
                 if u_kp in reg_u.kpidx_to_point:
                     continue
-                self._add_track(xyz, colour, {r: r_kp, u: u_kp})
+                self._add_track(xyz, colour, {r: r_kp, image_id: u_kp})
                 added += 1
         return added
 
@@ -582,7 +575,7 @@ class IncrementalReconstruction:
         step = 0
 
         while True:
-            u, corr = self._find_next(rejected, min_corr)
+            u, corr = self._find_next(rejected, min_corr) 
             if u is None:             # nothing left that reaches min_corr
                 break
 

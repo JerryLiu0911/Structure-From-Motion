@@ -387,8 +387,10 @@ def build_2d3d_correspondences(
     anchor_to_new_matches: list[cv2.DMatch],
     new_keypoints: list[cv2.KeyPoint],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build 2D-3D correspondences for registering a third image."""
-    anchor_indices = np.asarray(reconstructed_anchor_indices, dtype=int).reshape(-1)
+    """Build 2D-3D correspondences for registering a third image, given registered anchor indices and their 3D points, matches from those anchors to the new image, and the new image's keypoints. 
+    Returns a tuple of (points3d, pts2d) where points3d is an (M, 3) array of 3D point coordinates corresponding to the M matches, and pts2d is an (M, 2) array of the new image's keypoint coordinates 
+    for those matches."""
+    anchor_indices = np.asarray(reconstructed_anchor_indices, dtype=int).reshape(-1) # indicies of keypoints in the anchor image that were reconstructed, should match the order of reconstructed_points
     points = np.asarray(reconstructed_points, dtype=np.float64)
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError("Reconstructed points must have shape (N, 3)")
@@ -427,7 +429,8 @@ def estimate_camera_pose_pnp(
     threshold: float = 6.0,
     confidence: float = 0.999,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Estimate a new camera pose from 2D-3D correspondences using PnP."""
+    """Estimate a new camera pose from 2D-3D correspondences using PnP. Takes an existing set of 3D points and their corresponding 2D projections in the new image, along with the camera intrinsics K.
+    Uses RANSAC to find a robust pose estimate, returning the rotation matrix R, translation vector t, and a boolean mask indicating which correspondences are inliers to the estimated pose."""
     points3d = np.asarray(points3d, dtype=np.float64)
     pts2d = np.asarray(pts2d, dtype=np.float64)
     K = np.asarray(K, dtype=np.float64)
