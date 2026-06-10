@@ -577,7 +577,6 @@ class IncrementalReconstruction:
             ))
         return metrics
 
-    # -- outputs ------------------------------------------------------------
 
     def point_cloud(self) -> tuple[np.ndarray, np.ndarray]:
         if not self.tracks:
