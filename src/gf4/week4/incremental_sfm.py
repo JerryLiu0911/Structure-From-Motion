@@ -576,15 +576,15 @@ class IncrementalReconstruction:
                 continue
             P = self.K @ np.hstack((reg.R, reg.t.reshape(3, 1)))
             x, y = self.features[img_id].keypoints[kp].pt
-            rows.append(x * P[2] - P[0])
-            rows.append(y * P[2] - P[1])
+            rows.append(x * P[2] - P[0]) # x * (P·X)=0 -> two rows per view,
+            rows.append(y * P[2] - P[1]) # where P0,P1,P2 are the rows of P
         if len(rows) < 4:                        # need >= 2 views (2 rows each)
             return None
         _, _, Vt = np.linalg.svd(np.asarray(rows, dtype=np.float64))
         Xh = Vt[-1]
         if abs(Xh[3]) < 1e-12:                   # point at infinity -> reject
             return None
-        return Xh[:3] / Xh[3]
+        return Xh[:3] / Xh[3]                    # dehomogenise (divide by w)  
 
     def retriangulate(self, max_reproj: float = 4.0) -> int:
         """Re-estimate every track's xyz from all its registered observations,
@@ -594,16 +594,18 @@ class IncrementalReconstruction:
         observing camera (cheirality) and reprojects within `max_reproj` in all
         of them; otherwise the old position is kept. Returns the number of
         points whose position was updated.
+
+        NB: not bundle adjustment
         """
         updated = 0
         for track in self.tracks.values():
             obs = {i: k for i, k in track.observations.items() if i in self.registered}
-            if len(obs) < 2:
+            if len(obs) < 2: # need >= 2 views to retriangulate
                 continue
             X = self._triangulate_multiview(obs)
             if X is None:
                 continue
-            ok = True
+            ok = True # all-or-nothing: any bad view rejects it
             for img_id, kp in obs.items():
                 reg = self.registered[img_id]
                 if _depths_in_camera(X.reshape(1, 3), reg.R, reg.t)[0] <= 0:   # cheirality
@@ -617,7 +619,7 @@ class IncrementalReconstruction:
                     ok = False
                     break
             if ok:
-                track.xyz = X
+                track.xyz = X # poses untouched -> not bundle adjustment
                 updated += 1
         return updated
 
