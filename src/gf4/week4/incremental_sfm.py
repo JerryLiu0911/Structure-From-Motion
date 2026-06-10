@@ -159,9 +159,9 @@ class Track:
     This structure allows us to keep track of each 3D point and its corresponding 2D observations across multiple images in the incremental SfM pipeline, which  """
 
     point_id: int
-    xyz: np.ndarray                       # (3,)
+    xyz: np.ndarray                       # (3,) 3D coordinates of the point in the reconstruction frame
     colour: np.ndarray                    # (3,) uint8
-    observations: dict[int, int] = field(default_factory=dict)  # image_id -> keypoint_idx
+    observations: dict[int, int] = field(default_factory=dict)  # creates a dictionary mapping of image_ids to the respective keypoint_indices which was used to triangulate the point
 
 
 @dataclass
@@ -171,9 +171,10 @@ class RegisteredCamera:
     from keypoint indices to 3D point IDs for the keypoints that have been linked to the map."""
 
     image_id: int
-    R: np.ndarray                         # (3, 3) world->camera rotation
-    t: np.ndarray                         # (3, 1) translation
-    kpidx_to_point: dict[int, int] = field(default_factory=dict)  # keypoint_idx -> point_id
+    R: np.ndarray                        
+    t: np.ndarray                       
+    kpidx_to_point: dict[int, int] = field(default_factory=dict)  # similar to Track, but for the registered camera, it maps keypoint indices to the corresponding 3D point IDs in the reconstruction. 
+                                                                  # This allows us to quickly look up which 3D point corresponds to a given keypoint in the registered image, helpful for 2D-3D correspondences when trying to register new images and for extending tracks with new observations.
 
 
 @dataclass
@@ -208,7 +209,7 @@ class IncrementalReconstruction:
     def __init__(self, K, features: dict, pair_matches: dict, week3):
         self.K = np.asarray(K, dtype=np.float64)
         self.features = features
-        self.pair_matches = pair_matches
+        self.pair_matches = pair_matches # An extension of cv2.DMatch, except but stored as a dictionary mapping pairs of image IDs (i, j) to lists of matched keypoint index pairs (keypoint_idx_i, keypoint_idx_j). 
         self.week3 = week3 # injected Week 3 geometry module
 
         self.registered: dict[int, RegisteredCamera] = {} # Stores all registered cameras, mapping image IDs to their corresponding RegisteredCamera instances, which contain the camera's rotation, translation, and keypoint-to-point mapping.
@@ -222,18 +223,20 @@ class IncrementalReconstruction:
         self.final_retri_updated = 0
 
     def matches_between(self, a: int, b: int) -> list[tuple[int, int]]:
-        """Matches oriented as (keypoint_idx_a, keypoint_idx_b)."""
+        """Similar to cv2.DMatch,  Matches oriented as (keypoint_idx_a, keypoint_idx_b)."""
         if a == b:
             return []
-        if a < b:
+        if a < b: # Using the convention that matches are sorted, we can prevent duplicate storage and ensure consistent access by always looking up the pair in a specific order (a, b) where a < b.
             return self.pair_matches.get((a, b), [])
         return [(q, p) for (p, q) in self.pair_matches.get((b, a), [])]
 
     def _pts_from_pairs(self, image1_id: int, image2_id: int, pairs: list[tuple[int, int]]):
-        kpa = self.features[image1_id].keypoints
-        kpb = self.features[image2_id].keypoints
-        pa = np.array([kpa[i].pt for (i, _) in pairs], dtype=np.float64)
-        pb = np.array([kpb[j].pt for (_, j) in pairs], dtype=np.float64)
+        """ Utilitly function that finds the 2D coordinates of the matched keypoints in both images given their IDs and the list of matched keypoint index pairs. 
+        It retrieves the keypoints for each image from the precomputed features, extracts the coordinates of the matched keypoints based on the provided pairs"""
+        keypoint_a = self.features[image1_id].keypoints
+        keypoint_b = self.features[image2_id].keypoints
+        pa = np.array([keypoint_a[i].pt for (i, _) in pairs], dtype=np.float64)
+        pb = np.array([keypoint_b[j].pt for (_, j) in pairs], dtype=np.float64)
         return pa, pb
 
     def _add_track(self, xyz: np.ndarray, colour: np.ndarray, observations: dict[int, int]) -> int:
@@ -408,7 +411,7 @@ class IncrementalReconstruction:
 
         Returns the unregistered, non-rejected image with the most 2D-3D
         correspondences, provided it reaches `min_corr`. Falling below `min_corr`
-        does *not* reject an image -- its count can still rise as tracks are
+        does not reject an image its count can still rise as tracks are
         extended, so it stays a candidate for later rounds. The loop therefore
         stops only when no image can currently be placed, not at the first miss.
         """
@@ -435,6 +438,8 @@ class IncrementalReconstruction:
         pnp_threshold: float,
         confidence: float,
     ) -> bool:
+        """ Tries to register a new image_id 'u' from its 2D-3D correspondences in `corr`.
+        Returns True on success, False on failure (not enough inliers or too low inlier ratio)."""
         if corr["count"] < 6:
             return False
         try:
