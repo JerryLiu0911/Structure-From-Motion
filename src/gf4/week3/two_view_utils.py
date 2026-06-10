@@ -360,7 +360,7 @@ def filter_reconstructed_points(
     t: np.ndarray,
     max_reprojection_error: float = 4.0,
 ) -> np.ndarray:
-    """Return a boolean mask for valid triangulated points."""
+    """Return a boolean mask for valid triangulated points, filters by finite coordinates, positive depth in both cameras, and reprojection error below a threshold in both views."""
     points3d = np.asarray(points3d, dtype=np.float64)
     errors1 = np.asarray(errors1, dtype=np.float64).reshape(-1)
     errors2 = np.asarray(errors2, dtype=np.float64).reshape(-1)

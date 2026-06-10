@@ -28,24 +28,20 @@ import cv2
 import numpy as np
 
 
-# ---------------------------------------------------------------------------
-# Initial-pair selection helpers
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class PairCandidate:
-    """Two-view geometry summary for one candidate initial pair."""
+    """A dataclass to manage two-view geometry candidate scores for initial pair selection."""
 
     image_i: str
     image_j: str
-    ransac_inliers: int          # from the Week 2 CSV (fundamental-matrix RANSAC)
+    ransac_inliers: int      # from the Week 2 CSV (fundamental-matrix RANSAC)
     pose_inliers: int            # cheirality-valid inliers after pose recovery
     triangulated_points: int     # finite points used for the angle estimate
     median_tri_angle: float      # degrees -- the baseline / parallax measure
 
-    def passes_gate(self, min_tri_angle: float) -> bool:
-        return self.median_tri_angle >= min_tri_angle
+    # def angle_check(self, min_tri_angle: float) -> bool:
+    #     return self.median_tri_angle >= min_tri_angle
+    
 
     def as_dict(self) -> dict:
         return {
@@ -63,12 +59,9 @@ def median_triangulation_angle(
     R: np.ndarray,
     t: np.ndarray,
 ) -> float:
-    """Median parallax angle (degrees) at the triangulated points.
-
-    Camera 1 sits at the origin; camera 2's centre is C2 = -R^T t. For each 3D
-    point X the angle between the rays X->C1 and X->C2 is the triangulation
-    angle. The angle is invariant to the unknown global scale, so it is a
-    reliable baseline measure straight out of two-view pose recovery.
+    """Median parallax angle (degrees) at the triangulated points. 
+    We look at the angle between the projected rays from the two cameras to each point using the recovered relative pose (R, t).
+    Since the global scale is unknown, we can't measure the actual distance between the cameras, but the angle is invariant to scale and gives us a good measure of the baseline.
     """
     points3d = np.asarray(points3d, dtype=np.float64)
     if points3d.ndim != 2 or points3d.shape[1] != 3 or len(points3d) == 0:
@@ -102,7 +95,7 @@ def choose_initial_pair(
 ) -> PairCandidate:
     """Pick the best initial pair from evaluated candidates.
 
-    Prefer pairs whose median triangulation angle clears `min_tri_angle` (enough
+    Prefer pairs whose median triangulation angle clears `angle_check` (enough
     baseline for stable triangulation); among those, take the one with the most
     pose inliers. If none clear the gate, fall back to the best by pose inliers
     so the caller is never left without an initial pair.
@@ -110,14 +103,20 @@ def choose_initial_pair(
     if not candidates:
         raise ValueError("No candidates to choose from")
 
-    passing = [c for c in candidates if c.passes_gate(min_tri_angle)]
+    passing = [c for c in candidates if c.median_tri_angle >= min_tri_angle]
     pool = passing if passing else candidates
     return max(pool, key=lambda c: c.pose_inliers)
 
 
-# ---------------------------------------------------------------------------
-# Geometry helpers
-# ---------------------------------------------------------------------------
+def _triangulation_angles(X, Rr, tr, Ru, tu):
+    """Parallax angle (deg) at each point between cameras r and u."""
+    Cr = (-Rr.T @ tr.reshape(3, 1)).ravel()
+    Cu = (-Ru.T @ tu.reshape(3, 1)).ravel()
+    v1, v2 = X - Cr, X - Cu
+    n1 = np.linalg.norm(v1, axis=1)
+    n2 = np.linalg.norm(v2, axis=1)
+    cos = np.einsum("ij,ij->i", v1, v2) / np.maximum(n1 * n2, 1e-12)
+    return np.degrees(np.arccos(np.clip(cos, -1.0, 1.0)))
 
 
 def triangulate_general(
@@ -306,7 +305,7 @@ class IncrementalReconstruction:
         """Bootstrap the reconstruction from a seed pair. Returns #seed points."""
         pairs = self.matches_between(i, j)
         if len(pairs) < 8:
-            raise ValueError(f"Seed pair has too few matches: {len(pairs)}")
+            raise ValueError(f"Seed pair has too few matches, needs at least 8 for RANSAC: {len(pairs)}")
 
         pts_i, pts_j = self._pts_from_pairs(i, j, pairs)
         E, emask = self.geom.estimate_essential_matrix(
@@ -369,10 +368,18 @@ class IncrementalReconstruction:
         return {"count": len(u_kps), "points3d": points3d, "pts2d": pts2d,
                 "u_kp": u_kps, "point_ids": point_ids}
 
-    def _find_next(self, rejected: set) -> tuple[int | None, dict | None]:
+    def _find_next(self, rejected: set, min_corr: int) -> tuple[int | None, dict | None]:
+        """Most-connected eligible image, or (None, None) if none qualifies.
+
+        Returns the unregistered, non-rejected image with the most 2D-3D
+        correspondences, provided it reaches `min_corr`. Falling below `min_corr`
+        does *not* reject an image -- its count can still rise as tracks are
+        extended, so it stays a candidate for later rounds. The loop therefore
+        stops only when no image can currently be placed, not at the first miss.
+        """
         best_u = None
         best_corr = None
-        best_count = -1
+        best_count = min_corr - 1          # only counts >= min_corr qualify
         for u in self.features:
             if u in self.registered or u in rejected:
                 continue
@@ -389,6 +396,7 @@ class IncrementalReconstruction:
         corr: dict,
         *,
         min_pnp_inliers: int,
+        min_pnp_ratio: float,
         pnp_threshold: float,
         confidence: float,
     ) -> bool:
@@ -403,7 +411,13 @@ class IncrementalReconstruction:
             return False
 
         inliers = int(np.sum(mask))
+        # Two gates: an absolute floor and an inlier *ratio*. A drifted/wrong
+        # pose often clears the floor (e.g. 37 inliers) while explaining only a
+        # few percent of its correspondences; the ratio gate rejects it before
+        # it pollutes the cloud. Healthy registrations sit well above 0.5.
         if inliers < min_pnp_inliers:
+            return False
+        if corr["count"] > 0 and inliers < min_pnp_ratio * corr["count"]:
             return False
 
         self.registered[u] = RegisteredImage(
@@ -417,7 +431,57 @@ class IncrementalReconstruction:
         self._last_pnp_inliers = inliers
         return True
 
-    def triangulate_new_points(self, u: int, max_reproj: float = 4.0) -> int:
+    def _extend_tracks(self, u: int, max_reproj: float = 4.0) -> int:
+        """Link `u`'s remaining keypoints to 3D points already owned by its
+        registered neighbours.
+
+        `_register` only links the PnP-inlier correspondences that
+        `gather_2d3d` happened to pick (one per `u` keypoint, first match wins).
+        But many more of `u`'s keypoints match registered images whose keypoints
+        already own a 3D point. Linking them here:
+
+          * lengthens tracks (more observations per point),
+          * stops `triangulate_new_points` re-triangulating those points as
+            duplicates (they are no longer "fresh"),
+          * and -- the connectivity lever -- means future images matching `u`
+            inherit these 2D-3D correspondences, so the registered frontier stops
+            being point-starved and stalled images cross `min_corr`.
+
+        Only links observations consistent with `u`'s recovered pose
+        (reprojection error within `max_reproj`), so a wrong match cannot poison
+        a track. Returns the number of observations added.
+        """
+        reg_u = self.registered[u]
+        candidates: dict[int, int] = {}   # u_keypoint_idx -> point_id (first match wins)
+        for r in self.registered:
+            if r == u:
+                continue
+            reg_r = self.registered[r]
+            for (r_kp, u_kp) in self.matches_between(r, u):
+                if u_kp in reg_u.kpidx_to_point or u_kp in candidates:
+                    continue
+                pid = reg_r.kpidx_to_point.get(r_kp)
+                if pid is not None:
+                    candidates[u_kp] = pid
+        if not candidates:
+            return 0
+
+        u_kps = list(candidates)
+        pids = [candidates[k] for k in u_kps]
+        kp = self.features[u].keypoints
+        pts2d = np.array([kp[k].pt for k in u_kps], dtype=np.float64)
+        X = np.array([self.tracks[p].xyz for p in pids], dtype=np.float64)
+        err = self.geom.compute_reprojection_errors(X, pts2d, self.K, reg_u.R, reg_u.t)
+
+        added = 0
+        for u_kp, pid, e in zip(u_kps, pids, err):
+            if np.isfinite(e) and e <= max_reproj:
+                reg_u.kpidx_to_point[u_kp] = pid
+                self.tracks[pid].observations[u] = u_kp
+                added += 1
+        return added
+
+    def triangulate_new_points(self, u: int, max_reproj: float = 4.0, min_tri_angle: float = 2.0) -> int:
         """Triangulate points `u` shares with registered neighbours that are
         not yet in the map. Returns the number of new points added."""
         added = 0
@@ -442,11 +506,13 @@ class IncrementalReconstruction:
             err_u = self.geom.compute_reprojection_errors(X, pts_u, self.K, Ru, tu)
             depth_r = _depths_in_camera(X, reg_r.R, reg_r.t)
             depth_u = _depths_in_camera(X, Ru, tu)
+            ang = _triangulation_angles(X, reg_r.R, reg_r.t, Ru, tu)
             keep = (
                 np.isfinite(X).all(axis=1)
                 & (depth_r > 0) & (depth_u > 0)
                 & np.isfinite(err_r) & np.isfinite(err_u)
                 & (err_r <= max_reproj) & (err_u <= max_reproj)
+                & (ang >= min_tri_angle)  # low-angle points are unstable and often wrong
             )
             if not np.any(keep):
                 continue
@@ -465,8 +531,9 @@ class IncrementalReconstruction:
     def run(
         self,
         *,
-        min_corr: int = 20,
-        min_pnp_inliers: int = 15,
+        min_corr: int = 12,
+        min_pnp_inliers: int = 10,
+        min_pnp_ratio: float = 0.0,
         pnp_threshold: float = 6.0,
         confidence: float = 0.999,
         max_reproj: float = 4.0,
@@ -480,13 +547,14 @@ class IncrementalReconstruction:
         step = 0
 
         while True:
-            u, corr = self._find_next(rejected)
-            if u is None or corr["count"] < min_corr:
+            u, corr = self._find_next(rejected, min_corr)
+            if u is None:             # nothing left that reaches min_corr
                 break
 
             ok = self._register(
                 u, corr,
                 min_pnp_inliers=min_pnp_inliers,
+                min_pnp_ratio=min_pnp_ratio,
                 pnp_threshold=pnp_threshold,
                 confidence=confidence,
             )
@@ -494,6 +562,7 @@ class IncrementalReconstruction:
                 rejected.add(u)        # too weak for now; retry after structure grows
                 continue
 
+            self._extend_tracks(u, max_reproj=max_reproj)
             new_points = self.triangulate_new_points(u, max_reproj=max_reproj)
             rejected.clear()           # the cloud changed; give failed images another chance
             step += 1

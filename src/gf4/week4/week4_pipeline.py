@@ -71,12 +71,12 @@ def read_metrics_csv(metrics_csv: Path) -> list[dict]:
         return list(csv.DictReader(handle))
 
 
-def build_match_cache(features_by_id: dict, week2, ratio: float) -> dict:
+def build_match_cache(features_by_id: dict, week2, ratio: float=0.8) -> dict: # Since week2 doesn't export a "match all pairs" function, we build a cache of matches for every pair here. The cache maps (i, j) to a list of (queryIdx, trainIdx) pairs, where i < j are the image IDs. This way we only compute matches once per pair, and can reuse them for both seed selection and incremental reconstruction.
     """Match every image pair once: (i, j) with i < j -> [(kp_i, kp_j), ...]."""
-    cache: dict[tuple[int, int], list[tuple[int, int]]] = {}
-    ids = sorted(features_by_id)
-    for a in range(len(ids)):
-        for b in range(a + 1, len(ids)):
+    cache: dict[tuple[int, int], list[tuple[int, int]]] = {}  # Cache structure defined as a dictionary mapping pairs of image IDs to lists of matched keypoint index pairs.
+    ids = sorted(features_by_id) # Get a sorted list of image IDs from the features_by_id dictionary
+    for a in range(len(ids)): # Iterate over each image ID as the first element of the pair
+        for b in range(a + 1, len(ids)): # Iterate over each image ID as the second element of the pair, ensuring that b > a to avoid duplicate pairs and self-matching
             i, j = ids[a], ids[b]
             matches = week2.match_descriptors(
                 features_by_id[i].descriptors, features_by_id[j].descriptors, ratio=ratio
@@ -196,14 +196,24 @@ def parse_args() -> argparse.Namespace:
                         help="Minimum Week 2 RANSAC inliers to consider as a seed.")
     parser.add_argument("--min-corr", type=int, default=20,
                         help="Minimum 2D-3D correspondences to attempt registering an image.")
-    parser.add_argument("--min-pnp-inliers", type=int, default=15,
-                        help="Minimum PnP inliers to accept a registration.")
+    parser.add_argument("--min-pnp-inliers", type=int, default=30,
+                        help="Minimum PnP inliers (absolute floor) to accept a registration.")
+    parser.add_argument("--min-pnp-ratio", type=float, default=0.3,
+                        help="Minimum PnP inlier ratio (inliers / 2D-3D correspondences) to "
+                             "accept a registration. Rejects drifted poses that clear the "
+                             "absolute floor but explain only a small fraction of their matches.")
     parser.add_argument("--ratio", type=float, default=0.75)
     parser.add_argument("--ransac-threshold", type=float, default=1.0)
     parser.add_argument("--pnp-threshold", type=float, default=6.0)
     parser.add_argument("--confidence", type=float, default=0.999)
-    parser.add_argument("--max-reprojection-error", type=float, default=4.0)
-    parser.add_argument("--focal-length-px", type=float, default=None)
+    parser.add_argument("--max-reprojection-error", type=float, default=2.5)
+    parser.add_argument("--focal-length-px", type=float, default=None,
+                        help="Override focal length in px. If unset, derived from "
+                             "--focal-35mm-equiv and the resized image diagonal.")
+    parser.add_argument("--focal-35mm-equiv", type=float, default=24.0,
+                        help="35mm-equivalent focal length from EXIF (mm). Combined with the "
+                             "full-frame diagonal (43.267mm) and the resized image diagonal "
+                             "to recover focal length in pixels.")
     parser.add_argument("--max-features", type=int, default=4000)
     parser.add_argument("--max-image-size", type=int, default=1600)
     parser.add_argument("--view", action="store_true",
@@ -232,18 +242,31 @@ def main() -> int:
     features = week2.precompute_image_features(
         pool_paths, max_features=args.max_features, max_image_size=args.max_image_size
     )
-    features_by_id = {idx: f for idx, f in enumerate(features)}
+    features_by_id = {idx: f for idx, f in enumerate(features)} # Creates a dictionary mapping image IDs (integers) to their corresponding feature data, allowing for easy access to features by image ID throughout the pipeline.
     name_to_id = {f.path.name: idx for idx, f in features_by_id.items()}
     print(f"Loaded {len(features)} pool images")
 
     # 2. Shared intrinsics + all-pairs match cache.
-    K = week3.make_camera_matrix(features[0].image.shape, focal_length_px=args.focal_length_px)
+    # All pool images share one camera (single-camera assumption). Derive the
+    # focal length from the EXIF 35mm-equivalent and the *actual* resized image
+    # diagonal, and let the principal point auto-centre. The old hardcoded
+    # principal_point=(800,600) assumed a 4:3 frame; these 16:9 photos resize to
+    # 1600x902, so (800,600) put the principal point ~149px below true centre.
+    h, w = features[0].image.shape[:2]
+    focal_px = args.focal_length_px
+    if focal_px is None:
+        focal_px = args.focal_35mm_equiv * (w ** 2 + h ** 2) ** 0.5 / 43.267
+    K = week3.make_camera_matrix(features[0].image.shape, focal_length_px=focal_px)
+    print(f"Intrinsics: f={focal_px:.1f}px, principal=({(w - 1) / 2:.1f},{(h - 1) / 2:.1f}), "
+          f"image {w}x{h}")
     print("Matching all image pairs...")
     pair_matches = build_match_cache(features_by_id, week2, args.ratio)
 
     engine = IncrementalReconstruction(K, features_by_id, pair_matches, week3)
 
-    # 3. Seed selection (triangulation-angle gate).
+    # Selects the initial seed pair. It reads the pairwise metrics from the provided CSV file, filters and ranks candidate pairs 
+    # based on the number of RANSAC inliers, and then re-scores the top candidates using the actual two-view geometry to compute 
+    # pose inliers and triangulation angles. The final selection is made using a combination of pose inliers and a minimum triangulation angle threshold to ensure a good baseline for reconstruction.
     seed_i, seed_j, candidates = select_seed(
         engine, args.metrics_csv, name_to_id,
         top_k=args.top_k, min_inliers=args.min_inliers,
@@ -270,6 +293,7 @@ def main() -> int:
     metrics = engine.run(
         min_corr=args.min_corr,
         min_pnp_inliers=args.min_pnp_inliers,
+        min_pnp_ratio=args.min_pnp_ratio,
         pnp_threshold=args.pnp_threshold,
         confidence=args.confidence,
         max_reproj=args.max_reprojection_error,
