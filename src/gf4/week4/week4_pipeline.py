@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
                         help="Directory where metrics and figures are written.")
     parser.add_argument("--week2-dir", type=Path, default=DEFAULT_WEEK2_DIR)
     parser.add_argument("--week3-dir", type=Path, default=DEFAULT_WEEK3_DIR)
-    parser.add_argument("--max-images", type=int, default=20,
+    parser.add_argument("--max-images", type=int, default=200,
                         help="Maximum number of pool images to load.")
     parser.add_argument("--top-k", type=int, default=10,
                         help="How many top-inlier pairs to re-score for the seed.")
@@ -244,6 +244,35 @@ def main() -> int:
     print(f"  registered : {', '.join(registered_names)}")
     if rejected:
         print(f"  not registered : {', '.join(rejected)}")
+        # Diagnostic: for each unregistered image, its 2D-3D foothold AND the PnP
+        # inlier ratio it achieves against the FINAL cloud (read-only probe, not
+        # committed). High footholds + low ratio => the ratio gate is the binding
+        # constraint, i.e. the rejects' correspondences are mostly geometrically
+        # inconsistent, not missing.
+        footholds, ratios = [], []
+        for fid in features_by_id:
+            if fid in engine.registered:
+                continue
+            corr = engine.gather_2d3d(fid)
+            footholds.append(corr["count"])
+            r = 0.0
+            if corr["count"] >= 6:
+                try:
+                    _, _, mask = week3.estimate_camera_pose_pnp(
+                        corr["points3d"], corr["pts2d"], K,
+                        threshold=args.pnp_threshold, confidence=args.confidence)
+                    r = float(np.sum(mask)) / corr["count"]
+                except Exception:
+                    r = 0.0
+            ratios.append(r)
+        below = sum(1 for c in footholds if c < args.min_corr)
+        clear = sum(1 for r in ratios if r >= args.min_pnp_ratio)
+        print(f"  unregistered footholds (2D-3D vs final cloud): "
+              f"median {int(np.median(footholds))}, max {max(footholds)}, "
+              f"{below}/{len(footholds)} below min_corr={args.min_corr}")
+        print(f"  unregistered PnP ratio (probe vs final cloud): "
+              f"median {np.median(ratios):.2f}, max {max(ratios):.2f}, "
+              f"{clear}/{len(ratios)} would clear min_pnp_ratio={args.min_pnp_ratio}")
     print(f"  wrote: {output_dir}")
     print(f"  view: python view_cloud.py --path {output_dir / 'points3d.ply'}")
     return 0
