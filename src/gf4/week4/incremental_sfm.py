@@ -1,25 +1,3 @@
-"""GF4 Week 4 incremental Structure-from-Motion tools.
-
-Pure reconstruction helpers and a stateful incremental engine. This module does
-no module loading or file I/O -- the Week 4 driver (`week4_pipeline.py`) loads
-the Week 2 / Week 3 utilities and injects the Week 3 geometry module into the
-engine.
-
-Week 3 registers exactly one extra image (image 3) against a fixed initial pair.
-Week 4 generalises that single add-step into a loop over a pool of images:
-
-  * a persistent *point map* links every 3D point to the (image, keypoint)
-    observations that produced it, so a new image can be matched against *all*
-    registered images, not just two fixed anchors;
-  * `triangulate_general` triangulates between two arbitrary registered cameras
-    (Week 3's `triangulate_points` assumes the first camera is at the origin);
-  * images are added greedily -- each step registers the unregistered image with
-    the most 2D-3D correspondences to the current cloud.
-
-Initial-pair selection uses the *median triangulation angle* (parallax) so the
-reconstruction starts from a wide-baseline, well-conditioned pair.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -56,8 +34,8 @@ def median_triangulation_angle(
     t: np.ndarray,
 ) -> float:
     """Median parallax angle at the triangulated points. 
-    We look at the angle between the projected rays from the two cameras to each point using the recovered relative pose (R, t).
-    Since the global scale is unknown, we can't measure the actual distance between the cameras, but the angle is invariant to scale and gives us a good measure of the baseline.
+    We look at the angle between the projected rays from the two cameras to each point using the recovered relative pose (R, t), 
+    allowing us to assess the quality of the triangulation.
     """
     points3d = np.asarray(points3d, dtype=np.float64)
     if points3d.ndim != 2 or points3d.shape[1] != 3 or len(points3d) == 0:
@@ -128,7 +106,8 @@ def triangulate_general(
     pts2: np.ndarray,
 ) -> np.ndarray:
     """Generalisation of Week 3's triangulate_points for arbitrary registered cameras, by using two projection matrices instead of assuming the first camera is at the origin. 
-    The projection matrices P1 and P2 are constructed using the camera intrinsics K and the extrinsic parameters (R, t) for each camera. The OpenCV function cv2.triangulatePoints is then used to triangulate the 3D points from the corresponding 2D points in each image.
+    The projection matrices P1 and P2 are constructed using the camera intrinsics K and the extrinsic parameters (R, t) for each camera. 
+    The OpenCV function cv2.triangulatePoints is then used to triangulate the 3D points from the corresponding 2D points in each image.
     """
     K = np.asarray(K, dtype=np.float64)
     P1 = K @ np.hstack((np.asarray(R1, dtype=np.float64), np.asarray(t1, dtype=np.float64).reshape(3, 1)))
@@ -174,7 +153,6 @@ class RegisteredCamera:
     R: np.ndarray                        
     t: np.ndarray                       
     kpidx_to_point: dict[int, int] = field(default_factory=dict)  # similar to Track, but for the registered camera, it maps keypoint indices to the corresponding 3D point IDs in the reconstruction. 
-                                                                  # This allows us to quickly look up which 3D point corresponds to a given keypoint in the registered image, helpful for 2D-3D correspondences when trying to register new images and for extending tracks with new observations.
 
 
 @dataclass
@@ -212,8 +190,8 @@ class IncrementalReconstruction:
         self.pair_matches = pair_matches # An extension of cv2.DMatch, except but stored as a dictionary mapping pairs of image IDs (i, j) to lists of matched keypoint index pairs (keypoint_idx_i, keypoint_idx_j). 
         self.week3 = week3 # injected Week 3 geometry module
 
-        self.registered: dict[int, RegisteredCamera] = {} # Stores all registered cameras, mapping image IDs to their corresponding RegisteredCamera instances, which contain the camera's rotation, translation, and keypoint-to-point mapping.
-        self.tracks: dict[int, Track] = {} # Stores all reconstructed 3D points (tracks), mapping point IDs to their corresponding Track instances, which contain the 3D coordinates, color, and observations of each point across the registered images.
+        self.registered: dict[int, RegisteredCamera] = {} # Stores all registered cameras, mapping image IDs to their corresponding RegisteredCamera instances
+        self.tracks: dict[int, Track] = {} # Stores all reconstructed 3D points (Tracks), mapping point IDs to their corresponding Track instances, used for managing the 3D points and their observations across the registered cameras.
         self.next_point_id = 0
         self._last_pnp_inliers = 0
         # Reprojection errors either side of the final retriangulation pass
@@ -260,8 +238,8 @@ class IncrementalReconstruction:
         ransac_threshold: float = 1.0,
         confidence: float = 0.999,
     ) -> tuple[int, int, float] | None:
-        """Score a candidate pair: (pose_inliers, finite_points, tri_angle), inspired from week2's function but using the recovered pose to count inliers and triangulate points for the angle estimate.
-
+        """Score a candidate pair: (pose_inliers, finite_points, tri_angle), inspired from week2's function but using the
+        recovered pose to count inliers and triangulate points for the angle estimate.
         Does not modify reconstruction state; used for initial-pair selection.
         """
         pairs = self.matches_between(i, j)
@@ -277,7 +255,7 @@ class IncrementalReconstruction:
             )
         except Exception:
             return None
-        X = self.week3.triangulate_points(pts_i[pose_mask], pts_j[pose_mask], self.K, R, t) # Returns (Number of inliers, 3) array of triangulated 3D points for the inlier matches, which are then used to compute the median triangulation angle as a measure of the baseline quality between the two views.
+        X = self.week3.triangulate_points(pts_i[pose_mask], pts_j[pose_mask], self.K, R, t)
         angle = median_triangulation_angle(X, R, t)
         return int(np.sum(pose_mask)), int(np.isfinite(X).all(axis=1).sum()), angle
 
@@ -295,7 +273,6 @@ class IncrementalReconstruction:
         which are then scored using the two_view_geometry function to evaluate their suitability as the initial pair for reconstruction. 
         The candidates are filtered based on the number of RANSAC inliers and the median triangulation angle, and the best candidate is selected using the choose_initial_pair function.
         The function returns the image IDs of the selected seed pair and the list of evaluated candidates for reporting purposes.
-
         """
         name_to_id = {f.path.name: idx for idx, f in self.features.items()}
         shortlist = sorted(
@@ -379,18 +356,18 @@ class IncrementalReconstruction:
         return int(np.sum(keep))
 
     def gather_2d3d(self, new_image_id: int) -> dict:
-        """Collect 2D-3D correspondences for an unregistered image `u`.
+        """Collect 2D-3D correspondences for an unregistered image index 'new_image_id'.
 
         For each registered image, follow matches into its keypoint->point map.
         Each keypoint in the unregistered image `new_image_id` is used once (first match wins).
         """
-        seen: dict[int, int] = {}   # stores a collection of seen keypoint indices in the unregistered image `new_image_id` and their corresponding 3D point IDs. This mapping is built by iterating through all registered images and their matches to the unregistered image `new_image_id`. For each match, if the keypoint in `new_image_id` has not been seen before, it checks if the corresponding keypoint in the registered image maps to a 3D point ID. If it does, it adds this keypoint index and point ID to the `seen` dictionary. This way, we gather a set of 2D-3D correspondences that can be used for PnP pose estimation when trying to register the new image `new_image_id`.
-        for r in self.registered:
-            reg = self.registered[r]
-            for (r_kp, u_kp) in self.matches_between(r, new_image_id):
+        seen: dict[int, int] = {}   # stores a collection of seen keypoint indices in the unregistered image `new_image_id` and their corresponding 3D point IDs. 
+        for registered_image_id in self.registered:
+            registered_image = self.registered[registered_image_id]
+            for (r_kp, u_kp) in self.matches_between(registered_image_id, new_image_id):
                 if u_kp in seen:
                     continue
-                point_id = reg.kpidx_to_point.get(r_kp)
+                point_id = registered_image.kpidx_to_point.get(r_kp)
                 if point_id is not None:
                     seen[u_kp] = point_id
 
@@ -418,11 +395,11 @@ class IncrementalReconstruction:
         best_u = None
         best_corr = None
         best_count = min_corr - 1          # only counts >= min_corr qualify
-        for u in self.features: #iteratively goes through each feature and matches it against the registered images to gather 2D-3D correspondences. It keeps track of the image with the most correspondences that meets the minimum threshold, and returns that image and its correspondences for registration in the next step.
+        for u in self.features: #iteratively goes through each feature and matches it against the registered images to gather 2D-3D correspondences. 
             if u in self.registered or u in rejected:
                 continue
             corr = self.gather_2d3d(u)
-            if corr["count"] > best_count:
+            if corr["count"] > best_count: # keeps track of the image with the most correspondences that meets the minimum threshold, and returns that image and its correspondences for registration in the next step.
                 best_count = corr["count"]
                 best_u = u
                 best_corr = corr
@@ -440,6 +417,7 @@ class IncrementalReconstruction:
     ) -> bool:
         """ Tries to register a new image_id 'u' from its 2D-3D correspondences in `corr`.
         Returns True on success, False on failure (not enough inliers or too low inlier ratio)."""
+        min_pnp_ratio = np.clip(min_pnp_ratio, 0.01, 0.5) # Ensure that the minimum PnP inlier ratio is at least 1% to prevent overly lenient acceptance of pose estimations with very few correspondences.
         if corr["count"] < 6:
             return False
         try:
@@ -451,13 +429,9 @@ class IncrementalReconstruction:
             return False
 
         inliers = int(np.sum(mask))
-        # Two gates: an absolute floor and an inlier *ratio*. A drifted/wrong
-        # pose often clears the floor (e.g. 37 inliers) while explaining only a
-        # few percent of its correspondences; the ratio gate rejects it before
-        # it pollutes the cloud. Healthy registrations sit well above 0.5.
-        if inliers < min_pnp_inliers:
+        if inliers < min_pnp_inliers: # Checks if it satisfies the minimum number of inliers required for a valid pose estimation.
             return False
-        if corr["count"] > 0 and inliers < min_pnp_ratio * corr["count"]:
+        if corr["count"] > 0 and inliers < min_pnp_ratio * corr["count"]: # Checks if the the number of inliers relative to the total correspondences is reasonable (low pnp ratio means the pose estimation is not reliable from )
             return False
 
         self.registered[u] = RegisteredCamera(
@@ -472,24 +446,11 @@ class IncrementalReconstruction:
         return True
 
     def _extend_tracks(self, image_id: int, max_reproj: float = 4.0) -> int:
-        """Link `image_id`'s remaining keypoints to 3D points already owned by its
-        registered neighbours.
-
-        `_register` only links the PnP-inlier correspondences that
-        `gather_2d3d` happened to pick (one per `u` keypoint, first match wins).
-        But many more of `u`'s keypoints match registered images whose keypoints
-        already own a 3D point. Linking them here:
-
-          * lengthens tracks (more observations per point),
-          * stops `triangulate_new_points` re-triangulating those points as
-            duplicates (they are no longer "fresh"),
-          * and -- the connectivity lever -- means future images matching `u`
-            inherit these 2D-3D correspondences, so the registered frontier stops
-            being point-starved and stalled images cross `min_corr`.
-
-        Only links observations consistent with `u`'s recovered pose
-        (reprojection error within `max_reproj`), so a wrong match cannot poison
-        a track. Returns the number of observations added.
+        """Link remaining keypoints in `image_id` to 3D points owned by its registered neighbours.
+        Find keypoints in the new image that match keypoints already associated with 3D points in nearby registered images.
+        Add only the first match per keypoint and only if the reprojection error under `image_id`'s pose is within `max_reproj`.
+        This extends tracks, avoids duplicate triangulation, and improves connectivity so other images can reach the minimum correspondence threshold.
+        Returns the number of observations added.
         """
         reg_u = self.registered[image_id]
         candidates: dict[int, int] = {}   # image_id_keypoint_idx -> point_id (first match wins)
@@ -522,8 +483,7 @@ class IncrementalReconstruction:
         return added
 
     def triangulate_new_points(self, image_id: int, max_reproj: float = 4.0, min_tri_angle: float = 2.0) -> int:
-        """Triangulate points `image_id` shares with registered neighbours that are
-        not yet in the map. Returns the number of new points added."""
+        """Triangulate points `image_id` shares with registered neighbours that are not yet in the map. Returns the number of new points added."""
         added = 0
         reg_u = self.registered[image_id]
         Ru, tu = reg_u.R, reg_u.t
@@ -569,9 +529,8 @@ class IncrementalReconstruction:
         return added
 
     def _triangulate_multiview(self, observations: dict[int, int]) -> np.ndarray | None:
-        """Linear (DLT) triangulation of one point from ALL its registered views,
+        """Linear triangulation of one point from ALL its registered views,
         holding poses fixed. Generalises triangulate_general to N>=2 cameras.
-
         Returns xyz, or None if < 2 views or the point falls at infinity.
         """
         rows = []
@@ -587,7 +546,7 @@ class IncrementalReconstruction:
             return None
         _, _, Vt = np.linalg.svd(np.asarray(rows, dtype=np.float64))
         Xh = Vt[-1]
-        if abs(Xh[3]) < 1e-12:                   # point at infinity -> reject
+        if abs(Xh[3]) < 1e-12:                   # reject points at infinity (homogeneous w close to 0)
             return None
         return Xh[:3] / Xh[3]                    # dehomogenise (divide by w)  
 
@@ -624,7 +583,7 @@ class IncrementalReconstruction:
                     ok = False
                     break
             if ok:
-                track.xyz = X # poses untouched -> not bundle adjustment
+                track.xyz = X
                 updated += 1
         return updated
 
@@ -681,9 +640,6 @@ class IncrementalReconstruction:
                 n_points=len(self.tracks),
                 retriangulated=retri,
             ))
-        # Final pass over the full cloud, bracketed by reprojection-error snapshots.
-        # Poses and the track set are unchanged across the pass.
-        # The difference is purely from re-estimating point positions.
         self.errors_before_retri = self.reprojection_errors()
         self.final_retri_updated = self.retriangulate(max_reproj=max_reproj)
         self.errors_after_retri = self.reprojection_errors()

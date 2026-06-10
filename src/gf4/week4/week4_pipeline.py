@@ -72,9 +72,9 @@ def read_metrics_csv(metrics_csv: Path) -> list[dict]:
         return list(csv.DictReader(handle))
 
 
-def build_match_cache(features_by_id: dict, week2, ratio: float=0.8) -> dict: # Since week2 doesn't export a "match all pairs" function, we build a cache of matches for every pair here. The cache maps (i, j) to a list of (queryIdx, trainIdx) pairs, where i < j are the image IDs. This way we only compute matches once per pair, and can reuse them for both seed selection and incremental reconstruction.
+def build_match_cache(features_by_id: dict, week2, ratio: float=0.8) -> dict: 
     """Match every image pair once: (i, j) with i < j -> [(kp_i, kp_j), ...]."""
-    cache: dict[tuple[int, int], list[tuple[int, int]]] = {}  # Cache structure defined as a dictionary mapping pairs of image IDs to lists of matched keypoint index pairs.
+    cache: dict[tuple[int, int], list[tuple[int, int]]] = {}  # Since week2 didn't export the matched keypoints, the cache structure maps pairs of image IDs to lists of matched keypoint index pairs.
     ids = sorted(features_by_id) # Get a sorted list of image IDs from the features_by_id dictionary
     for a in range(len(ids)): # Iterate over each image ID as the first element of the pair
         for b in range(a + 1, len(ids)): # Iterate over each image ID as the second element of the pair, ensuring that b > a to avoid duplicate pairs and self-matching
@@ -144,7 +144,7 @@ def main() -> int:
     week3 = load_week3_module(args.week3_dir)
     output_dir = week3.ensure_dir(args.output_dir) # Re-use week3's ensure_dir to create the output directory if it doesn't exist
 
-    pool_paths = week2.list_image_paths(args.image_dir, max_images=args.max_images) # Get a list of image file paths from the specified directory, limited to max_images. This will be the pool of images used for feature extraction and matching in the incremental SfM pipeline.
+    pool_paths = week2.list_image_paths(args.image_dir, max_images=args.max_images)
    
     if len(pool_paths) < 3:
         raise ValueError(f"Need at least 3 pool images, found {len(pool_paths)}")
@@ -153,7 +153,7 @@ def main() -> int:
         pool_paths, max_features=args.max_features, max_image_size=args.max_image_size
     )
 
-    features_by_id = {idx: f for idx, f in enumerate(features)} # Creates a dictionary mapping image IDs (integers) to their corresponding feature data, allowing for easy access to features by image ID throughout the pipeline.
+    features_by_id = {idx: f for idx, f in enumerate(features)} # Creates a dictionary mapping image IDs to their corresponding feature data.
     name_to_id = {f.path.name: idx for idx, f in features_by_id.items()}
     print(f"Loaded {len(features)} pool images")
 
