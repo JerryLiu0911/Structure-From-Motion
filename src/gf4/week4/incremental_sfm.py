@@ -187,6 +187,7 @@ class StepMetrics:
     new_points: int
     n_registered: int
     n_points: int
+    retriangulated: int = 0          # points updated by the periodic retriangulation pass
 
     def as_dict(self) -> dict:
         return {
@@ -197,6 +198,7 @@ class StepMetrics:
             "new_points": self.new_points,
             "n_registered": self.n_registered,
             "n_points": self.n_points,
+            "retriangulated": self.retriangulated,
         }
 
 
