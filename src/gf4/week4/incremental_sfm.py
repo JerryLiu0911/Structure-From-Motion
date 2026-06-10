@@ -556,6 +556,64 @@ class IncrementalReconstruction:
                 added += 1
         return added
 
+    def _triangulate_multiview(self, observations: dict[int, int]) -> np.ndarray | None:
+        """Linear (DLT) triangulation of one point from ALL its registered views,
+        holding poses fixed. Generalises triangulate_general to N>=2 cameras.
+
+        Returns xyz, or None if < 2 views or the point falls at infinity.
+        """
+        rows = []
+        for img_id, kp in observations.items():
+            reg = self.registered.get(img_id)
+            if reg is None:                      # only triangulate from placed cameras
+                continue
+            P = self.K @ np.hstack((reg.R, reg.t.reshape(3, 1)))
+            x, y = self.features[img_id].keypoints[kp].pt
+            rows.append(x * P[2] - P[0])
+            rows.append(y * P[2] - P[1])
+        if len(rows) < 4:                        # need >= 2 views (2 rows each)
+            return None
+        _, _, Vt = np.linalg.svd(np.asarray(rows, dtype=np.float64))
+        Xh = Vt[-1]
+        if abs(Xh[3]) < 1e-12:                   # point at infinity -> reject
+            return None
+        return Xh[:3] / Xh[3]
+
+    def retriangulate(self, max_reproj: float = 4.0) -> int:
+        """Re-estimate every track's xyz from all its registered observations,
+        holding camera poses fixed.
+
+        An update is committed only if the new position is in front of every
+        observing camera (cheirality) and reprojects within `max_reproj` in all
+        of them; otherwise the old position is kept. Returns the number of
+        points whose position was updated.
+        """
+        updated = 0
+        for track in self.tracks.values():
+            obs = {i: k for i, k in track.observations.items() if i in self.registered}
+            if len(obs) < 2:
+                continue
+            X = self._triangulate_multiview(obs)
+            if X is None:
+                continue
+            ok = True
+            for img_id, kp in obs.items():
+                reg = self.registered[img_id]
+                if _depths_in_camera(X.reshape(1, 3), reg.R, reg.t)[0] <= 0:   # cheirality
+                    ok = False
+                    break
+                pt = np.array([self.features[img_id].keypoints[kp].pt], dtype=np.float64)
+                e = self.week3.compute_reprojection_errors(
+                    X.reshape(1, 3), pt, self.K, reg.R, reg.t
+                )[0]
+                if not np.isfinite(e) or e > max_reproj:
+                    ok = False
+                    break
+            if ok:
+                track.xyz = X
+                updated += 1
+        return updated
+
     def run(
         self,
         *,
