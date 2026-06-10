@@ -125,6 +125,8 @@ def parse_args() -> argparse.Namespace:
                              "to recover focal length in pixels.")
     parser.add_argument("--max-features", type=int, default=4000)
     parser.add_argument("--max-image-size", type=int, default=1600)
+    parser.add_argument("--retriangulate-interval", type=int, default=5,
+                        help="Retriangulate every N registrations (0 disables).")
 
     args = parser.parse_args()
     if args.max_image_size == 0:
@@ -200,6 +202,7 @@ def main() -> int:
         pnp_threshold=args.pnp_threshold,
         confidence=args.confidence,
         max_reproj=args.max_reprojection_error,
+        retriangulate_interval=args.retriangulate_interval, # lets you run with in-loop retriangulation disabled (0) or every N registrations
     )
 
     # 5. Outputs.
