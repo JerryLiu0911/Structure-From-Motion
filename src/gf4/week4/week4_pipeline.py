@@ -307,25 +307,23 @@ def main() -> int:
 
     week2 = load_week2_module(args.week2_dir)
     week3 = load_week3_module(args.week3_dir)
-    output_dir = week3.ensure_dir(args.output_dir)
+    output_dir = week3.ensure_dir(args.output_dir) # Re-use week3's ensure_dir to create the output directory if it doesn't exist
 
-    # 1. Pool of images + features.
-    pool_paths = week2.list_image_paths(args.image_dir, max_images=args.max_images)
+    pool_paths = week2.list_image_paths(args.image_dir, max_images=args.max_images) # Get a list of image file paths from the specified directory, limited to max_images. This will be the pool of images used for feature extraction and matching in the incremental SfM pipeline.
+   
     if len(pool_paths) < 3:
         raise ValueError(f"Need at least 3 pool images, found {len(pool_paths)}")
+    
     features = week2.precompute_image_features(
         pool_paths, max_features=args.max_features, max_image_size=args.max_image_size
     )
+
     features_by_id = {idx: f for idx, f in enumerate(features)} # Creates a dictionary mapping image IDs (integers) to their corresponding feature data, allowing for easy access to features by image ID throughout the pipeline.
     name_to_id = {f.path.name: idx for idx, f in features_by_id.items()}
     print(f"Loaded {len(features)} pool images")
 
-    # 2. Shared intrinsics + all-pairs match cache.
-    # All pool images share one camera (single-camera assumption). Derive the
-    # focal length from the EXIF 35mm-equivalent and the *actual* resized image
-    # diagonal, and let the principal point auto-centre. The old hardcoded
-    # principal_point=(800,600) assumed a 4:3 frame; these 16:9 photos resize to
-    # 1600x902, so (800,600) put the principal point ~149px below true centre.
+    # Assuming single camera, the intrinsics are shared and calculated based on image dimensions and the provided focal length parameters. The focal length in pixels is derived from the 35mm equivalent focal length and the resized image diagonal,
+    # using the formula: focal_px = (focal_35mm_equiv / 43.267) * sqrt(w^2 + h^2), where 43.267mm is the diagonal of a full-frame sensor.
     h, w = features[0].image.shape[:2]
     focal_px = args.focal_length_px
     if focal_px is None:

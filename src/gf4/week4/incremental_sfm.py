@@ -39,10 +39,6 @@ class PairCandidate:
     triangulated_points: int     # finite points used for the angle estimate
     median_tri_angle: float      # degrees -- the baseline / parallax measure
 
-    # def angle_check(self, min_tri_angle: float) -> bool:
-    #     return self.median_tri_angle >= min_tri_angle
-    
-
     def as_dict(self) -> dict:
         return {
             "image_i": self.image_i,
@@ -59,7 +55,7 @@ def median_triangulation_angle(
     R: np.ndarray,
     t: np.ndarray,
 ) -> float:
-    """Median parallax angle (degrees) at the triangulated points. 
+    """Median parallax angle at the triangulated points. 
     We look at the angle between the projected rays from the two cameras to each point using the recovered relative pose (R, t).
     Since the global scale is unknown, we can't measure the actual distance between the cameras, but the angle is invariant to scale and gives us a good measure of the baseline.
     """
@@ -68,7 +64,7 @@ def median_triangulation_angle(
         return 0.0
 
     finite = np.isfinite(points3d).all(axis=1)
-    X = points3d[finite]
+    X = points3d[finite] # Only consider points with finite coordinates for angle calculation
     if len(X) == 0:
         return 0.0
 
@@ -80,12 +76,12 @@ def median_triangulation_angle(
     ray2 = c2 - X
     n1 = np.linalg.norm(ray1, axis=1)
     n2 = np.linalg.norm(ray2, axis=1)
-    valid = (n1 > 0) & (n2 > 0)
+    valid = (n1 > 0) & (n2 > 0) # # Avoid division by zero
     if not np.any(valid):
         return 0.0
 
-    cos_angle = np.einsum("ij,ij->i", ray1[valid], ray2[valid]) / (n1[valid] * n2[valid])
-    angles = np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
+    cos_angle = np.sum(ray1[valid] * ray2[valid], axis=1) / (n1[valid] * n2[valid])
+    angles = np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0)))  # Convert to degrees and clip to valid range for arccos
     return float(np.median(angles))
 
 
@@ -104,12 +100,15 @@ def choose_initial_pair(
         raise ValueError("No candidates to choose from")
 
     passing = [c for c in candidates if c.median_tri_angle >= min_tri_angle]
-    pool = passing if passing else candidates
+    pool = passing if passing else candidates # If no candidates clear the angle gate, consider them all (fallback)
     return max(pool, key=lambda c: c.pose_inliers)
 
 
 def _triangulation_angles(X, Rr, tr, Ru, tu):
-    """Parallax angle (deg) at each point between cameras r and u."""
+    """Parallax angle (deg) at each point between cameras r and u, allowing us to assess the quality of the
+    triangulation. Low angles are unstable and often wrong, so we filter them out in `triangulate_new_points`
+    This is similar in spirit to `median_triangulation_angle`, but we want the angle at each point, not the median,
+    and we have two arbitrary registered cameras (Rr,tr and Ru,tu) instead of one at the origin."""
     Cr = (-Rr.T @ tr.reshape(3, 1)).ravel()
     Cu = (-Ru.T @ tu.reshape(3, 1)).ravel()
     v1, v2 = X - Cr, X - Cu
@@ -128,10 +127,8 @@ def triangulate_general(
     pts1: np.ndarray,
     pts2: np.ndarray,
 ) -> np.ndarray:
-    """Triangulate points seen by two cameras with arbitrary poses.
-
-    Unlike Week 3's `triangulate_points`, neither camera is assumed to be at the
-    origin: both projection matrices are built explicitly as K[R|t].
+    """Generalisation of Week 3's triangulate_points for arbitrary registered cameras, by using two projection matrices instead of assuming the first camera is at the origin. 
+    The projection matrices P1 and P2 are constructed using the camera intrinsics K and the extrinsic parameters (R, t) for each camera. The OpenCV function cv2.triangulatePoints is then used to triangulate the 3D points from the corresponding 2D points in each image.
     """
     K = np.asarray(K, dtype=np.float64)
     P1 = K @ np.hstack((np.asarray(R1, dtype=np.float64), np.asarray(t1, dtype=np.float64).reshape(3, 1)))
@@ -156,14 +153,10 @@ def _depths_in_camera(points3d: np.ndarray, R: np.ndarray, t: np.ndarray) -> np.
     return cam[2]
 
 
-# ---------------------------------------------------------------------------
-# Reconstruction state
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class Track:
-    """One 3D point and the image observations that produced it."""
+    """ A dataclass that stores the 3D point's ID, its 3D coordinates (xyz), its color, and a dictionary of observations that maps image IDs to keypoint indices. 
+    This structure allows us to keep track of each 3D point and its corresponding 2D observations across multiple images in the incremental SfM pipeline, which  """
 
     point_id: int
     xyz: np.ndarray                       # (3,)
@@ -172,8 +165,10 @@ class Track:
 
 
 @dataclass
-class RegisteredImage:
-    """A camera that has been placed in the reconstruction frame."""
+class RegisteredCamera:
+    """A camera that has been placed in the reconstruction frame and used to triangulate points.
+    Stores the camera's ID, its rotation and translation relative to the world frame, and a mapping 
+    from keypoint indices to 3D point IDs for the keypoints that have been linked to the map."""
 
     image_id: int
     R: np.ndarray                         # (3, 3) world->camera rotation
@@ -206,34 +201,18 @@ class StepMetrics:
 
 
 class IncrementalReconstruction:
-    """Greedy incremental SfM over a pool of images.
+    """incremental SfM over a pool of images."""
 
-    Parameters
-    ----------
-    K
-        Shared camera intrinsics (single-camera assumption; all images same
-        resolution after resizing).
-    features
-        Mapping image_id -> Week 2 ImageFeatures (image, keypoints, descriptors).
-    pair_matches
-        Mapping (i, j) with i < j -> list of (keypoint_idx_i, keypoint_idx_j)
-        Lowe-filtered matches.
-    geom
-        The loaded Week 3 two_view_utils module (geometry functions).
-    """
-
-    def __init__(self, K, features: dict, pair_matches: dict, geom):
+    def __init__(self, K, features: dict, pair_matches: dict, week3):
         self.K = np.asarray(K, dtype=np.float64)
         self.features = features
         self.pair_matches = pair_matches
-        self.geom = geom
+        self.week3 = week3 # injected Week 3 geometry module
 
-        self.registered: dict[int, RegisteredImage] = {}
+        self.registered: dict[int, RegisteredCamera] = {}
         self.tracks: dict[int, Track] = {}
         self.next_point_id = 0
         self._last_pnp_inliers = 0
-
-    # -- low-level helpers --------------------------------------------------
 
     def matches_between(self, a: int, b: int) -> list[tuple[int, int]]:
         """Matches oriented as (keypoint_idx_a, keypoint_idx_b)."""
@@ -243,9 +222,9 @@ class IncrementalReconstruction:
             return self.pair_matches.get((a, b), [])
         return [(q, p) for (p, q) in self.pair_matches.get((b, a), [])]
 
-    def _pts_from_pairs(self, a: int, b: int, pairs: list[tuple[int, int]]):
-        kpa = self.features[a].keypoints
-        kpb = self.features[b].keypoints
+    def _pts_from_pairs(self, image1_id: int, image2_id: int, pairs: list[tuple[int, int]]):
+        kpa = self.features[image1_id].keypoints
+        kpb = self.features[image2_id].keypoints
         pa = np.array([kpa[i].pt for (i, _) in pairs], dtype=np.float64)
         pb = np.array([kpb[j].pt for (_, j) in pairs], dtype=np.float64)
         return pa, pb
@@ -272,7 +251,7 @@ class IncrementalReconstruction:
         ransac_threshold: float = 1.0,
         confidence: float = 0.999,
     ) -> tuple[int, int, float] | None:
-        """Score a candidate pair: (pose_inliers, finite_points, tri_angle).
+        """Score a candidate pair: (pose_inliers, finite_points, tri_angle), inspired from week2's function but using the recovered pose to count inliers and triangulate points for the angle estimate.
 
         Does not modify reconstruction state; used for initial-pair selection.
         """
@@ -281,15 +260,15 @@ class IncrementalReconstruction:
             return None
         pts_i, pts_j = self._pts_from_pairs(i, j, pairs)
         try:
-            E, emask = self.geom.estimate_essential_matrix(
+            E, emask = self.week3.estimate_essential_matrix(
                 pts_i, pts_j, self.K, threshold=ransac_threshold, confidence=confidence
             )
-            R, t, pose_mask = self.geom.recover_relative_pose(
+            R, t, pose_mask = self.week3.recover_relative_pose(
                 E, pts_i, pts_j, self.K, inlier_mask=emask
             )
         except Exception:
             return None
-        X = self.geom.triangulate_points(pts_i[pose_mask], pts_j[pose_mask], self.K, R, t)
+        X = self.week3.triangulate_points(pts_i[pose_mask], pts_j[pose_mask], self.K, R, t)
         angle = median_triangulation_angle(X, R, t)
         return int(np.sum(pose_mask)), int(np.isfinite(X).all(axis=1).sum()), angle
 
@@ -302,37 +281,37 @@ class IncrementalReconstruction:
         confidence: float = 0.999,
         max_reproj: float = 4.0,
     ) -> int:
-        """Bootstrap the reconstruction from a seed pair. Returns #seed points."""
+        """Bootstrap the reconstruction from a pair of images. Returns number of points in the initial map."""
         pairs = self.matches_between(i, j)
         if len(pairs) < 8:
             raise ValueError(f"Seed pair has too few matches, needs at least 8 for RANSAC: {len(pairs)}")
 
         pts_i, pts_j = self._pts_from_pairs(i, j, pairs)
-        E, emask = self.geom.estimate_essential_matrix(
+        E, emask = self.week3.estimate_essential_matrix(
             pts_i, pts_j, self.K, threshold=ransac_threshold, confidence=confidence
         )
-        R, t, pose_mask = self.geom.recover_relative_pose(
+        R, t, pose_mask = self.week3.recover_relative_pose(
             E, pts_i, pts_j, self.K, inlier_mask=emask
         )
 
         eye = np.eye(3)
         zero = np.zeros((3, 1))
-        self.registered[i] = RegisteredImage(i, eye, zero)
-        self.registered[j] = RegisteredImage(j, np.asarray(R, dtype=np.float64),
+        self.registered[i] = RegisteredCamera(i, eye, zero)
+        self.registered[j] = RegisteredCamera(j, np.asarray(R, dtype=np.float64),
                                              np.asarray(t, dtype=np.float64).reshape(3, 1))
 
         pts_i_p = pts_i[pose_mask]
         pts_j_p = pts_j[pose_mask]
         pairs_p = [p for p, keep in zip(pairs, pose_mask) if keep]
 
-        X = self.geom.triangulate_points(pts_i_p, pts_j_p, self.K, R, t)
-        err1 = self.geom.compute_reprojection_errors(X, pts_i_p, self.K, eye, zero)
-        err2 = self.geom.compute_reprojection_errors(X, pts_j_p, self.K, R, t)
-        keep = self.geom.filter_reconstructed_points(
+        X = self.week3.triangulate_points(pts_i_p, pts_j_p, self.K, R, t)
+        err1 = self.week3.compute_reprojection_errors(X, pts_i_p, self.K, eye, zero)
+        err2 = self.week3.compute_reprojection_errors(X, pts_j_p, self.K, R, t)
+        keep = self.week3.filter_reconstructed_points(
             X, err1, err2, R, t, max_reprojection_error=max_reproj
         )
 
-        colours = self.geom.sample_point_colours(self.features[i].image, pts_i_p[keep])
+        colours = self.week3.sample_point_colours(self.features[i].image, pts_i_p[keep])
         kept_pairs = [p for p, k in zip(pairs_p, keep) if k]
         for (i_kp, j_kp), xyz, colour in zip(kept_pairs, X[keep], colours):
             self._add_track(xyz, colour, {i: i_kp, j: j_kp})
@@ -420,7 +399,7 @@ class IncrementalReconstruction:
         if corr["count"] > 0 and inliers < min_pnp_ratio * corr["count"]:
             return False
 
-        self.registered[u] = RegisteredImage(
+        self.registered[u] = RegisteredCamera(
             u, np.asarray(R, dtype=np.float64), np.asarray(t, dtype=np.float64).reshape(3, 1)
         )
         for idx in np.nonzero(mask)[0]:
