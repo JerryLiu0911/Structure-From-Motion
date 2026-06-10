@@ -25,7 +25,10 @@ import sys
 import numpy as np
 
 from incremental_sfm import IncrementalReconstruction
-import view_cloud  # Ensure the viewer is importable for the --view option, even if PyVista is missing (the viewer imports it lazily)
+try:
+    import view_cloud  # noqa: F401  kept importable as a CLI hint; not used in main()
+except ModuleNotFoundError:
+    view_cloud = None   # viewer deps (PyVista) are optional and not needed to reconstruct
 
 
 DEFAULT_WEEK2_DIR = Path(__file__).resolve().parents[1] / "week2"
@@ -244,6 +247,17 @@ def main() -> int:
     if len(errors):
         print(f"  median reprojection error : {np.median(errors):.3f} px")
         print(f"  mean reprojection error   : {np.mean(errors):.3f} px")
+    eb, ea = engine.errors_before_retri, engine.errors_after_retri
+    if len(eb) and len(ea):
+        # Same poses and the same point set on both sides of the final pass.
+        # Shows that the change is attributable purely to retriangulation.
+        # The win lands in the tail (p95 / sub-pixel fraction), not the median.
+        print(f"  retriangulation (final pass): {engine.final_retri_updated} / "
+              f"{len(engine.tracks)} points re-estimated")
+        print(f"    reproj median : {np.median(eb):.3f} -> {np.median(ea):.3f} px")
+        print(f"    reproj mean   : {np.mean(eb):.3f} -> {np.mean(ea):.3f} px")
+        print(f"    reproj p95    : {np.percentile(eb, 95):.3f} -> {np.percentile(ea, 95):.3f} px")
+        print(f"    obs under 1px : {np.mean(eb < 1):.1%} -> {np.mean(ea < 1):.1%}")
     print(f"  registered : {', '.join(registered_names)}")
     if rejected:
         print(f"  not registered : {', '.join(rejected)}")

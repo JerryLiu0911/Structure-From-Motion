@@ -215,6 +215,11 @@ class IncrementalReconstruction:
         self.tracks: dict[int, Track] = {} # Stores all reconstructed 3D points (tracks), mapping point IDs to their corresponding Track instances, which contain the 3D coordinates, color, and observations of each point across the registered images.
         self.next_point_id = 0
         self._last_pnp_inliers = 0
+        # Reprojection errors either side of the final retriangulation pass
+        # Allowsthe driver to report the improvement (set at the end of run()).
+        self.errors_before_retri = np.empty(0)
+        self.errors_after_retri = np.empty(0)
+        self.final_retri_updated = 0
 
     def matches_between(self, a: int, b: int) -> list[tuple[int, int]]:
         """Matches oriented as (keypoint_idx_a, keypoint_idx_b)."""
@@ -669,7 +674,12 @@ class IncrementalReconstruction:
                 n_points=len(self.tracks),
                 retriangulated=retri,
             ))
-        self.retriangulate(max_reproj=max_reproj)   # final pass over the full cloud
+        # Final pass over the full cloud, bracketed by reprojection-error snapshots.
+        # Poses and the track set are unchanged across the pass.
+        # The difference is purely from re-estimating point positions.
+        self.errors_before_retri = self.reprojection_errors()
+        self.final_retri_updated = self.retriangulate(max_reproj=max_reproj)
+        self.errors_after_retri = self.reprojection_errors()
         return metrics
 
 
