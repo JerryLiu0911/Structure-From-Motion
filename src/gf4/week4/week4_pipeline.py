@@ -156,6 +156,7 @@ def main() -> int:
     features_by_id = {idx: f for idx, f in enumerate(features)} # Creates a dictionary mapping image IDs to their corresponding feature data.
     name_to_id = {f.path.name: idx for idx, f in features_by_id.items()}
     print(f"Loaded {len(features)} pool images")
+    total_features_keypoints = sum(len(f.keypoints) for f in features)
 
     # Assuming single camera, the intrinsics are shared and calculated based on image dimensions and the provided focal length parameters. The focal length in pixels is derived from the 35mm equivalent focal length and the resized image diagonal,
     # using the formula: focal_px = (focal_35mm_equiv / 43.267) * sqrt(w^2 + h^2), where 43.267mm is the diagonal of a full-frame sensor.
@@ -242,6 +243,7 @@ def main() -> int:
 
     print()
     print("Incremental reconstruction complete")
+    print(f"Number of total feature keypoints: {total_features_keypoints}")
     print(f"  registered cameras : {len(engine.registered)} / {len(features)}")
     print(f"  sparse 3D points   : {len(engine.tracks)}")
     if len(errors):
