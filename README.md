@@ -1,8 +1,5 @@
 # GF4 — Structure from Motion
 
-A guided project that teaches Structure from Motion (SfM) through hands-on experimentation: running COLMAP as a professional reference system and implementing key steps of the SfM pipeline from scratch in Python.
-
-> **Course:** GF4 · University of Cambridge
 > **Language:** Python 3.13
 > **Key dependencies:** pycolmap, OpenCV, NumPy, Matplotlib · PyVista (optional, Week 4 visualisation)
 
@@ -20,26 +17,9 @@ src/gf4/
     two_view_utils.py    # Two-view geometry: E, pose, triangulation, PnP, plots
     week3_pipeline.py    # Two-view + third-image reconstruction CLI
   week4/
-    incremental_sfm.py   # Incremental SfM engine (point map + greedy loop)
+    incremental_sfm.py   # Incremental SfM engine: point map, greedy PnP loop, retriangulation
     week4_pipeline.py    # Multi-view reconstruction CLI
-    IMPLEMENTATION.md    # Detailed Week 4 implementation notes
-colmap/                  # COLMAP helper scripts and notes
-COLMAP projects/         # Local reconstruction data — gitignored
-```
-
----
-
-## Prerequisites
-
-| Tool | Install |
-|------|---------|
-| [Miniconda](https://docs.anaconda.com/miniconda/) | via installer |
-| [COLMAP](https://colmap.github.io/install.html) | OS package manager or binary |
-
-Verify COLMAP is available:
-
-```bash
-colmap gui
+    view_cloud.py        # PyVista point-cloud + camera-frustum viewer
 ```
 
 ---
@@ -83,16 +63,6 @@ Activate the environment once, then use the short commands:
 ```bash
 conda activate gf4-sfm
 ```
-
-### Week 1 — COLMAP sparse reconstruction
-
-```bash
-sfm-week1 --image-dir path/to/images --output-dir path/to/output
-
-# or without activating:
-conda run -n gf4-sfm sfm-week1 --image-dir path/to/images --output-dir path/to/output
-```
-
 ### Week 2 — Pairwise feature matching & epipolar geometry
 
 **Pair mode** (one image pair):
@@ -130,33 +100,37 @@ Outputs: reprojection overlays, 2-/3-view reconstruction plots, a patch cloud,
 
 ### Week 4 — Incremental multi-view reconstruction
 
-Generalises Week 3 to a pool of images: it selects a wide-baseline initial pair
-(parallax-gated), bootstraps a two-view reconstruction, then greedily registers
-the remaining images by PnP and triangulates new structure after each. It reuses
-the Week 2 and Week 3 utilities, reads the Week 2 `pairwise_metrics.csv` to pick
-the seed, and uses **no COLMAP** (COLMAP is only an external baseline for the
-report). Run as a script from its directory:
+
 
 ```bash
 cd src/gf4/week4
 python week4_pipeline.py \
-  --metrics-csv ../../../out/dataset-partial-doge/pairwise_metrics.csv \
-  --image-dir   ../../../images/partial_doge_images \
-  --output-dir  ../../../out/week4-partial-doge \
-  --max-images 20
+  --metrics-csv ../../../out/dataset-doge/pairwise_metrics.csv \
+  --image-dir   ../../../images/Doge \
+  --output-dir  ../../../out/week4-doge \
+  --max-images 200
 ```
 
-Outputs: per-step metrics (`incremental_metrics.csv`), `points3d.ply`, a
-multi-view matplotlib figure, and a PyVista screenshot. Add `--view` for an
-interactive 3D window, or view a saved cloud directly:
+Outputs (in `--output-dir`): per-step metrics (`incremental_metrics.csv`),
+`points3d.ply`, camera poses + intrinsics (`cameras.json`), and a multi-view
+matplotlib figure (`multi_view_reconstruction.png`). The run prints the
+registered/rejected cameras, reprojection error, and the before/after
+retriangulation comparison. Full options: `python week4_pipeline.py --help`.
+
+**Viewing the cloud.** `view_cloud.py` renders the saved PLY (and optionally the
+camera frusta) without re-running the reconstruction:
 
 ```bash
-python -c "import pyvista as pv; pv.read('out/week4-partial-doge/points3d.ply').plot(rgb=True, point_size=4)"
+cd src/gf4/week4
+python view_cloud.py --path ../../../out/week4-doge/points3d.ply
 ```
 
-See [`src/gf4/week4/IMPLEMENTATION.md`](src/gf4/week4/IMPLEMENTATION.md) for a
-detailed description of the engine, data structures, and design decisions. Full
-options: `python week4_pipeline.py --help`.
+Useful flags: `--clip P` keeps points within the P-th distance percentile of the
+cloud centre (drops far outliers that otherwise shrink the subject; `100` keeps
+all); `--cameras ../../../out/week4-doge/cameras.json` overlays the camera frusta;
+`--screenshot out.png` renders off-screen to a file instead of opening a window;
+plus `--point-size` and `--camera {iso,xy,xz,yz}`. Full options:
+`python view_cloud.py --help`.
 
 ---
 

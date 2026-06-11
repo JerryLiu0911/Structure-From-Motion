@@ -1,0 +1,54 @@
+\begin{thebibliography}{7}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[DeTone et~al.(2018)DeTone, Malisiewicz, and
+  Rabinovich]{detone2018superpoint}
+Daniel DeTone, Tomasz Malisiewicz, and Andrew Rabinovich.
+\newblock Superpoint: Self-supervised interest point detection and description.
+\newblock In \emph{CVPR Workshops}, 2018.
+
+\bibitem[Fischler \& Bolles(1981)Fischler and Bolles]{fischler1981ransac}
+Martin~A. Fischler and Robert~C. Bolles.
+\newblock Random sample consensus: A paradigm for model fitting with
+  applications to image analysis and automated cartography.
+\newblock \emph{Communications of the ACM}, 24\penalty0 (6):\penalty0 381--395,
+  1981.
+
+\bibitem[Lowe(2004)]{lowe2004sift}
+David~G. Lowe.
+\newblock Distinctive image features from scale-invariant keypoints.
+\newblock \emph{International Journal of Computer Vision}, 60\penalty0
+  (2):\penalty0 91--110, 2004.
+
+\bibitem[Sarlin et~al.(2020)Sarlin, DeTone, Malisiewicz, and
+  Rabinovich]{sarlin2020superglue}
+Paul-Edouard Sarlin, Daniel DeTone, Tomasz Malisiewicz, and Andrew Rabinovich.
+\newblock Superglue: Learning feature matching with graph neural networks.
+\newblock In \emph{IEEE Conference on Computer Vision and Pattern Recognition
+  (CVPR)}, 2020.
+
+\bibitem[Sch\"{o}nberger \& Frahm(2016)Sch\"{o}nberger and
+  Frahm]{schoenberger2016colmap}
+Johannes~L. Sch\"{o}nberger and Jan-Michael Frahm.
+\newblock Structure-from-motion revisited.
+\newblock In \emph{IEEE Conference on Computer Vision and Pattern Recognition
+  (CVPR)}, 2016.
+
+\bibitem[Sun et~al.(2021)Sun, Shen, Wang, Bao, and Zhou]{sun2021loftr}
+Jiaming Sun, Zehong Shen, Yuang Wang, Hujun Bao, and Xiaowei Zhou.
+\newblock Loftr: Detector-free local feature matching with transformers.
+\newblock In \emph{IEEE Conference on Computer Vision and Pattern Recognition
+  (CVPR)}, 2021.
+
+\bibitem[Umeyama(1991)]{umeyama1991}
+Shinji Umeyama.
+\newblock Least-squares estimation of transformation parameters between two
+  point patterns.
+\newblock \emph{IEEE Transactions on Pattern Analysis and Machine
+  Intelligence}, 13\penalty0 (4):\penalty0 376--380, 1991.
+
+\end{thebibliography}

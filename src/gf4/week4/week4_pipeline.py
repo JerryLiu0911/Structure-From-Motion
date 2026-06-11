@@ -244,6 +244,11 @@ def main() -> int:
     print("Incremental reconstruction complete")
     print(f"  registered cameras : {len(engine.registered)} / {len(features)}")
     print(f"  sparse 3D points   : {len(engine.tracks)}")
+    total_obs = sum(len(t.observations) for t in engine.tracks.values())
+    if engine.tracks and engine.registered:
+        print(f"  observations       : {total_obs}")
+        print(f"  mean track length  : {total_obs / len(engine.tracks):.2f}  (observations per point)")
+        print(f"  mean obs / image   : {total_obs / len(engine.registered):.1f}")
     if len(errors):
         print(f"  median reprojection error : {np.median(errors):.3f} px")
         print(f"  mean reprojection error   : {np.mean(errors):.3f} px")
@@ -290,6 +295,9 @@ def main() -> int:
         print(f"  unregistered PnP ratio (probe vs final cloud): "
               f"median {np.median(ratios):.2f}, max {max(ratios):.2f}, "
               f"{clear}/{len(ratios)} would clear min_pnp_ratio={args.min_pnp_ratio}")
+        (output_dir / "reject_diag.json").write_text(json.dumps(
+            {"reject_pnp_ratios": [round(r, 4) for r in ratios],
+             "reject_footholds": footholds}))
     print(f"  wrote: {output_dir}")
     print(f"  view: python view_cloud.py --path {output_dir / 'points3d.ply'}")
     return 0

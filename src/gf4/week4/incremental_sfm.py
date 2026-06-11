@@ -395,7 +395,7 @@ class IncrementalReconstruction:
         best_u = None
         best_corr = None
         best_count = min_corr - 1          # only counts >= min_corr qualify
-        for u in self.features: #iteratively goes through each feature and matches it against the registered images to gather 2D-3D correspondences. 
+        for u in self.features: #iteratively goes through each image and matches it against the registered images to gather 2D-3D correspondences. 
             if u in self.registered or u in rejected:
                 continue
             corr = self.gather_2d3d(u)
